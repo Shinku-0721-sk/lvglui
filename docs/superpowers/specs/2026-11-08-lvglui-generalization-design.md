@@ -221,12 +221,12 @@ idf_component_register(
         "src/ui_port_stub.c"
         "src/pages/home.c"
     INCLUDE_DIRS "include"
-    REQUIRES lvgl
+    REQUIRES __LVGL_COMPONENT__
 )
 ```
 
 - 新页面必须把 `.c` 加进 `SRCS`；host 构建按目录 glob，`doctor` 检查“`src/` 下的 `.c` 是否都列进 SRCS”，漏了直接报。
-- v1 只支持组件名 `lvgl`（ESP-IDF 托管组件的默认名）。若工程用了别的名字，`doctor` 报错并让用户改 `CMakeLists.txt`；工具不自动改。
+- 组件名由 `ctx.lvgl.dir` 的 basename 决定（`managed_components/lvgl__lvgl` → `lvgl__lvgl`，`components/lvgl` → `lvgl`）。`init` 复制模板时把 `__LVGL_COMPONENT__` 替换成该名字；v1 不手改工程其它 CMakeLists，也不猜测无法从目录名推导的别名。
 
 ### 9.4 主题与中文字体
 

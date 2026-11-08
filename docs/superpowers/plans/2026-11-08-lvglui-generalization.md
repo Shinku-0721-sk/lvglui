@@ -1383,6 +1383,7 @@ git commit -m "feat(preview): parameterized paths and async hot reload"
 - `integrationSnippet(config)` → `string`。
 - `ctx` 至少含 `root`、`uiDir`（可为默认）、`idf`、`lvgl`、`display`。
 - `width`/`height` 必须来自参数或 `ctx.display`；都没有时失败，不默认 240×320。
+- `ctx.lvgl.dir` 必填；组件名 = `path.basename(ctx.lvgl.dir)`（`managed_components/lvgl__lvgl` → `lvgl__lvgl`）。复制模板时把 `__LVGL_COMPONENT__` 替换成该名字。
 
 - [ ] **Step 1: 写模板**
 
@@ -1396,7 +1397,7 @@ idf_component_register(
     "src/ui_port_stub.c"
     "src/pages/home.c"
   INCLUDE_DIRS "include"
-  REQUIRES lvgl
+  REQUIRES __LVGL_COMPONENT__
 )
 ```
 
@@ -1543,7 +1544,7 @@ ui_start(NULL);
 
 `test/unit/init.test.mjs`：
 - 临时 root + `ctx`，`uiDir = components/app_ui`、`display` 240×320。
-- `initProject` 断言文件存在、`lvglui.json` 内容、`snippet` 含 `ui_start(NULL)`。
+- `initProject` 断言文件存在、`lvglui.json` 内容、`snippet` 含 `ui_start(NULL)`、复制后 CMakeLists 含 `REQUIRES lvgl__lvgl` 且无 `__LVGL_COMPONENT__`。
 - 第二次调用拒绝。
 - `uiDir: '../x'` 拒绝。
 
