@@ -6,7 +6,7 @@ import {
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { encodeRgb565Png } from './png.mjs';
+import { encodeRgb565Png } from '../core/png.mjs';
 import { parseSdkconfig, writeLvConf } from '../core/kconfig.mjs';
 import { detect } from './project.mjs';
 
