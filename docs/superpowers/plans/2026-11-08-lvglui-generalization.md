@@ -567,7 +567,7 @@ import { applyOverrides, translate } from '../../core/kconfig.mjs';
 
 test('translate drops build-only and deprecated', () => {
   const out = translate(
-    { LV_COLOR_DEPTH: '16', LV_CONF_SKIP: '1', LV_USE_OBJ_NAME: '0', LV_UNKNOWN: '1' },
+    new Map(Object.entries({ LV_COLOR_DEPTH: '16', LV_CONF_SKIP: '1', LV_USE_OBJ_NAME: '0', LV_UNKNOWN: '1' })),
     new Set(['LV_USE_OBJ_NAME', 'LV_COLOR_DEPTH'])
   );
   assert.deepEqual(out, { LV_USE_OBJ_NAME: '0' });
