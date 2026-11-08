@@ -188,6 +188,17 @@ test('search picks the first valid directory in stable sorted order', (t) => {
   assert.deepEqual(r.version, { major: 9, minor: 1, patch: 0 });
 });
 
+test('search finds a candidate at exactly depth 4', (t) => {
+  const root = tempDir(t);
+  const dir = makeLvglDir(path.join(root, 'a', 'b', 'c', 'lvgl'), { minor: 7 });
+
+  const r = findLvgl({ root, config: {} });
+  assert.equal(r.ok, true);
+  assert.equal(r.source, 'search');
+  assert.equal(r.dir, dir);
+  assert.deepEqual(r.version, { major: 9, minor: 7, patch: 0 });
+});
+
 test('search stops at depth 4', (t) => {
   const root = tempDir(t);
   makeLvglDir(path.join(root, 'a', 'b', 'c', 'd', 'lvgl'), { minor: 1 });
@@ -223,4 +234,53 @@ test('readLvglVersion reports a missing directory without throwing', (t) => {
   assert.equal(info.version, null);
   assert.equal(info.header, null);
   assert.match(info.problem, /not a directory/);
+});
+
+test('a rejected 8.x project LVGL is warned about when a vendored 9.x wins', (t) => {
+  const root = tempDir(t);
+  const rejected = makeLvglDir(managedDir(root), { major: 8, minor: 3 });
+  const vendored = makeLvglDir(path.join(root, 'third_party', 'lvgl'), { major: 9, minor: 2 });
+
+  const r = findLvgl({ root, config: {} });
+  assert.equal(r.ok, true);
+  assert.equal(r.source, 'search');
+  assert.equal(r.dir, vendored);
+  assert.match(r.warning, /8\.3\.0/);
+  assert.ok(r.warning.includes(rejected), `warning should name ${rejected}: ${r.warning}`);
+});
+
+test('an unstatable config.lvglDir fails structurally instead of throwing', (t) => {
+  const root = tempDir(t);
+  makeLvglDir(managedDir(root));
+
+  const r = findLvgl({ root, config: { lvglDir: 'vendor/\u0000bad' } });
+  assert.equal(r.ok, false);
+  assert.equal(r.dir, null);
+  assert.match(r.problem, /config\.lvglDir/);
+  assert.match(r.problem, /invalid|null byte/i);
+});
+
+test('a non-string config.lvglDir is a structured failure', (t) => {
+  for (const value of [42, false, {}, null]) {
+    const root = tempDir(t);
+    makeLvglDir(managedDir(root));
+
+    const r = findLvgl({ root, config: { lvglDir: value } });
+    assert.equal(r.ok, false, `config.lvglDir=${JSON.stringify(value)} should fail`);
+    assert.equal(r.dir, null);
+    assert.match(r.problem, /config\.lvglDir/);
+    assert.ok(r.problem.includes(JSON.stringify(value)),
+      `problem should name ${JSON.stringify(value)}: ${r.problem}`);
+  }
+});
+
+test('a config 8.x failure keeps the discovered version', (t) => {
+  const root = tempDir(t);
+  makeLvglDir(path.join(root, 'vendor', 'lvgl8'), { major: 8, minor: 4, patch: 1 });
+
+  const r = findLvgl({ root, config: { lvglDir: 'vendor/lvgl8' } });
+  assert.equal(r.ok, false);
+  assert.deepEqual(r.version, { major: 8, minor: 4, patch: 1 });
+  assert.match(r.problem, /需要 LVGL 9\.x/);
+  assert.match(r.problem, /8\.4\.1/);
 });

@@ -75,14 +75,27 @@ export function readLvglVersion(lvglDir) {
     return { ok: false, version: null, header: null, problem: 'LVGL path is empty' };
   }
   const dirAbs = path.resolve(lvglDir);
-  if (!isDirectory(dirAbs)) {
+  let dirExists;
+  try {
+    dirExists = isDirectory(dirAbs);
+  } catch (e) {
+    return { ok: false, version: null, header: null, problem: e.message };
+  }
+  if (!dirExists) {
     return { ok: false, version: null, header: null, problem: `LVGL path is not a directory: ${dirAbs}` };
   }
 
   const tried = [];
   for (const rel of VERSION_HEADERS) {
     const header = path.join(dirAbs, rel);
-    if (!isFile(header)) {
+    let headerExists;
+    try {
+      headerExists = isFile(header);
+    } catch (e) {
+      tried.push(`- ${header}: ${e.message}`);
+      continue;
+    }
+    if (!headerExists) {
       tried.push(`- ${header}: missing`);
       continue;
     }
@@ -143,7 +156,13 @@ function inspectCandidate(dir) {
   } catch (e) {
     return { dir: abs, problem: e.message };
   }
-  if (!info.ok) return { dir: abs, problem: info.problem };
+  if (!info.ok) {
+    const result = { dir: abs, version: info.version ?? null, problem: info.problem };
+    // A parsed but unsupported version (8.x, bad minor) is a skipped candidate,
+    // not a silently missing one: a later 9.x tree must not hide it.
+    if (info.version) result.warning = `skipped ${abs}: ${info.problem}`;
+    return result;
+  }
   return { dir: abs, version: info.version, header: info.header, ok: true };
 }
 
@@ -184,8 +203,26 @@ export function findLvgl(options = {}) {
     };
   }
 
+  function failure(problem, extra = {}) {
+    return {
+      ok: false,
+      dir: null,
+      version: null,
+      source: null,
+      warning: warnings.length > 0 ? warnings.join('; ') : null,
+      problem,
+      ...extra,
+    };
+  }
+
   function attempt(source, label, dir) {
-    const result = inspectCandidate(dir);
+    let result;
+    try {
+      result = inspectCandidate(dir);
+    } catch (e) {
+      attempts.push({ label, path: path.resolve(dir), reason: e.message });
+      return null;
+    }
     if (result.ok) return success(result, source);
     attempts.push({ label, path: result.dir, reason: result.problem });
     if (result.warning) warnings.push(result.warning);
@@ -193,25 +230,33 @@ export function findLvgl(options = {}) {
   }
 
   // 1. lvglui.json's lvglDir: explicit and therefore authoritative.
-  const configured = typeof data.lvglDir === 'string' && data.lvglDir.trim() !== ''
-    ? path.resolve(rootAbs, data.lvglDir)
-    : null;
+  let configured = null;
+  if (Object.prototype.hasOwnProperty.call(data, 'lvglDir')) {
+    const raw = data.lvglDir;
+    if (typeof raw !== 'string') {
+      return failure(
+        `config.lvglDir must be a non-empty string, got ${JSON.stringify(raw)}; omit it or use "" to mean unconfigured`,
+      );
+    }
+    if (raw.trim() !== '') configured = path.resolve(rootAbs, raw);
+  }
   if (configured === null) {
     attempts.push({ label: 'config.lvglDir', path: null, reason: 'not configured' });
   } else {
-    const result = inspectCandidate(configured);
+    let result;
+    try {
+      result = inspectCandidate(configured);
+    } catch (e) {
+      return failure(
+        `config.lvglDir is not a usable LVGL 9.x source tree: "${data.lvglDir}" (${configured}): ${e.message}`,
+      );
+    }
     if (result.ok) return success(result, 'config');
     if (result.warning) warnings.push(result.warning);
-    const why = result.problem;
-    const warning = warnings.length > 0 ? warnings.join('; ') : null;
-    return {
-      ok: false,
-      dir: null,
-      version: result.version ?? null,
-      source: null,
-      warning,
-      problem: `config.lvglDir is not a usable LVGL 9.x source tree: "${data.lvglDir}" (${configured}): ${why}`,
-    };
+    return failure(
+      `config.lvglDir is not a usable LVGL 9.x source tree: "${data.lvglDir}" (${configured}): ${result.problem}`,
+      { version: result.version ?? null },
+    );
   }
 
   // 2. ESP-IDF managed component.
@@ -245,7 +290,13 @@ export function findLvgl(options = {}) {
       const full = path.join(current, entry.name);
       if (tried.has(full)) continue;
 
-      const looksLikeLvgl = PUBLIC_HEADERS.some((rel) => isFile(path.join(full, rel)));
+      let looksLikeLvgl;
+      try {
+        looksLikeLvgl = PUBLIC_HEADERS.some((rel) => isFile(path.join(full, rel)));
+      } catch (e) {
+        attempts.push({ label: 'search', path: full, reason: e.message });
+        continue;
+      }
       if (looksLikeLvgl) {
         tried.add(full);
         searchedCandidate = true;
@@ -277,12 +328,5 @@ export function findLvgl(options = {}) {
     const where = entry.path === null ? '' : ` "${entry.path}"`;
     return `- ${entry.label}${where}: ${entry.reason}`;
   });
-  return {
-    ok: false,
-    dir: null,
-    version: null,
-    source: null,
-    warning: warnings.length > 0 ? warnings.join('; ') : null,
-    problem: `未找到可用的 LVGL 9.x，已尝试:\n${lines.join('\n')}`,
-  };
+  return failure(`未找到可用的 LVGL 9.x，已尝试:\n${lines.join('\n')}`);
 }
