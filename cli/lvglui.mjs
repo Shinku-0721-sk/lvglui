@@ -65,7 +65,7 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   preview      打开实时预览窗口
   init         在现有 ESP-IDF 工程中创建 UI 组件
   doctor       检查工程 / 工具链 / 显示配置
-  dsh install  生成 DeepSeek Harness 插件（当前版本可能不可用）
+  dsh install  生成 DeepSeek Harness 插件（当前版本可用）
   help         显示本帮助
 
 选项:
@@ -785,7 +785,7 @@ function toPosix(value) {
 async function runDshInstall(flags) {
   const modulePath = path.join(TOOL_DIR, 'core', 'dsh.mjs');
   if (!fs.existsSync(modulePath)) {
-    console.error('[lvglui] dsh installer not available: core/dsh.mjs 不存在（Task 16 尚未实现）');
+    console.error('[lvglui] dsh installer not available: core/dsh.mjs 不存在');
     if (flags.json) writeJson({ ok: false, problems: ['core/dsh.mjs not available'] });
     return 2;
   }

@@ -51,7 +51,7 @@ if(NOT LVGLUI_CONF_DIR)
   set(LVGLUI_CONF_DIR "${LVGLUI_TOOL_DIR}/host")
 endif()
 if(NOT LVGLUI_ENTRY)
-  # 只有绕过 CLI、直接用 build.bat 编（preview.exe 热重载）时才会走到这里
+  # 只有绕过 CLI、直接跑 .lvglui/build/build.cmd 时才会走到这里
   set(LVGLUI_ENTRY "sensor_ui_create")
   message(WARNING "LVGLUI_ENTRY 未指定，兜底用 ${LVGLUI_ENTRY}（走 CLI 时不会出现这条）")
 endif()

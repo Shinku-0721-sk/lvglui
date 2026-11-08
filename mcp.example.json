@@ -1,9 +1,12 @@
 {
-  "servers": {
+  "mcpServers": {
     "lvglui": {
-      "type": "stdio",
       "command": "node",
-      "args": ["D:\\LVGL_preview\\cli\\lvglui-mcp.mjs"]
+      "args": ["D:/LVGL_preview/cli/lvglui-mcp.mjs"],
+      "cwd": "D:/LVGL_preview",
+      "env": {
+        "LVGLUI_PROJECT": "D:/my_project"
+      }
     }
   }
 }

@@ -1,184 +1,177 @@
-# lvglui（D:\LVGL_preview）— 在电脑上跑你的 LVGL 界面
+# lvglui — 在 PC 上预览任意 ESP-IDF + LVGL 工程
 
-在 PC 上用**同一份 LVGL 源码**渲染 240×320 的界面：一个窗口实时看，一张 PNG 给模型/CI 看。
-不依赖 LVGL Pro、不依赖许可证、不依赖网络。
+`lvglui` 把工程里同一份 LVGL 界面源码编成 PC 程序：一张 PNG 给无头渲染/CI/模型看，一个窗口给你实时改。
 
-```
-D:\LVGL_preview\
-├─ build.bat / build-cli.bat   编译全部 / 编译（给 CLI 用，重定向 TMP）
-├─ shot.bat / lvglui.bat       出图 / CLI 入口
-├─ CMakeLists.txt
-├─ mcp.example.json            MCP 服务器配置样例（贴进 VSCode / Claude）
-├─ host/                       壳：窗口、计时、文件监听、PNG 编码（不含 LVGL）
-│  ├─ preview_main.c           240x320 窗口 + 保存即重载
-│  ├─ shot_main.c              无头渲染 → PNG（或 --raw 出原始帧）
-│  ├─ png_write.c              自带的极简 PNG 编码器（无第三方依赖）
-│  ├─ ui_host.h                preview.exe ↔ ui.dll 的 ABI
-│  └─ lv_conf.h                PC 侧 LVGL 配置：16bpp、无 OS、CLIB
-│
-├─ (../../components/app_ui/screen1_c.c)  ★ 界面真身，固件与预览共用
-├─ ui/
-│  ├─ ui_entry.c               PC 宿主 ABI（attach/tick/pixels/detach），不含界面
-│  └─ ui.def                   只导出 4 个 ABI 符号
-└─ cli/
-   ├─ lvglui.mjs               CLI：render / build / preview / doctor
-   ├─ lvglui-mcp.mjs           MCP server（stdio）
-   ├─ core.mjs                 两边共用的实现
-   └─ png.mjs                  RGB565 → PNG（用 node zlib，3 KB 一张）
-```
+它面向**已有的 ESP-IDF 6.x + LVGL 9.x 工程**：LVGL 组件、显示驱动、触摸 BSP 都由工程自己准备好；`lvglui` 只负责 UI 层的搭建、预览、截图和控件树。
 
-## 用法
+## 前置条件
 
-```bat
-cd D:\LVGL_preview
-build.bat                              :: 第一次约 1.5 分钟，之后增量 1~2 秒
+- Windows 10/11
+- Node.js 22+
+- Visual Studio 2022（C++ 桌面开发）
+- ESP-IDF **6.x**（工具会从工程自己的 `build/project_description.json`、`.vscode/settings.json`、`lvglui.json` 或 `IDF_PATH` 发现它，不信任全局环境）
+- 工程里已有可用的 LVGL **9.x**，并且显示/触摸已经能工作
+- 界面 `.c` 只 include LVGL 和 UI 自己的头；**不要** include `driver/`、`esp_`、`freertos/` 等平台头
 
-lvglui.bat render                      :: 出图 → out\preview.png（JSON 结果打到 stdout）
-lvglui.bat render --out out\a.png --quiet   :: 只打印路径
-lvglui.bat preview                     :: 开窗口，改 ui_entry.c 保存即刷新，Esc 退出
-lvglui.bat doctor                      :: 检查这台机器能不能编
+## 快速开始
+
+```bash
+# 1. 在现有工程里注入 UI 组件（只新增文件，不改现有文件）
+node cli/lvglui.mjs init --project D:/my_project --width 240 --height 320
+
+# 2. 检查工程/LVGL/IDF/工具链
+node cli/lvglui.mjs doctor --project D:/my_project
+
+# 3. 无头渲染 → .lvglui/out/shot.png + tree.json + meta.json
+node cli/lvglui.mjs render --project D:/my_project
+
+# 4. 实时预览窗口（改 UI 保存即重编）
+node cli/lvglui.mjs preview --project D:/my_project
 ```
 
-`render` 的 JSON：
+`init` 会：
+
+- 创建 `components/app_ui/`（或 `lvglui.json` 指定的 `uiDir`）
+- 创建 `lvglui.json`
+- 在 stdout 打印一段接入代码；需要你把它粘到 `main` 里（通常替换原来的 `lv_screen_load(...)`）
+
+如果 `sdkconfig` 里能唯一推断出宽高，可以省略 `--width/--height`；推断不出时命令会失败，不会偷偷用 240×320。
+
+## 目录
+
+```
+cli/                 CLI 入口 + MCP stdio server
+core/                工程发现、配置、IDF/LVGL、构建、渲染、诊断、DSH 安装
+host/                PC 壳：窗口、计时、PNG、UI 树、ABI
+ui-template/         init 注入的 UI 组件模板
+dsh/                 DeepSeek Harness bundle（skill + MCP client）
+test/                node:test 单测 + 集成测试
+```
+
+产物只写 `<project>/.lvglui/build/` 和 `<project>/.lvglui/out/`：
+
+- `build/`：`lv_conf.h`、`lvglui.cmake`、`build.cmd`、`build.log`、`shot.exe`、`preview.exe`、`ui.dll`
+- `out/`：`shot.png`、`tree.json`、`meta.json`
+
+## lvglui.json
 
 ```json
-{"ok":true,"png":"...\\out\\preview.png","width":240,"height":320,"bytes":3483,
- "repaints":1,"timings":{"build":2319,"shot":38,"encode":12}}
+{
+  "schema": 1,
+  "idfPath": "E:/esp/v6.1/esp-idf",
+  "lvglDir": "managed_components/lvgl__lvgl",
+  "uiDir": "components/app_ui",
+  "entry": "ui_start",
+  "display": { "width": 240, "height": 320, "colorDepth": 16 },
+  "build": { "dir": ".lvglui/build" },
+  "font": { "cjk": true }
+}
 ```
 
-失败时：
+- `idfPath` / `lvglDir` / `uiDir` 可相对工程根
+- `entry` 是 UI 入口函数，默认 `ui_start`
+- `colorDepth` 目前只接受 `16`
+- `font.cjk` 默认 `true`；预览用的 `lv_conf.h` 会强制开启 LVGL 自带的 14/16 中文（固件侧要自己开 `CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_*_CJK`）
+- `build.dir` 只能指向工程内；默认 `.lvglui/build`
 
-```json
-{"ok":false,"stage":"build","errors":[{"msg":"...ui_entry.c(146): error C2065: \"NOPE\": 未声明的标识符"}],"png":null}
-```
-
-## 三个产物，各管一头
-
-| 工具 | 谁看 | 特点 |
-|---|---|---|
-| `lvglui render` / `shot.exe` | 模型 / CI | 无窗口、无墙钟，12 帧定时刻，**同一份代码每次出图逐像素相同** |
-| `preview.exe` | 人 | 常驻窗口，保存源码后约 1 秒自动重载 |
-| MCP `render_ui` | 任意 agent 客户端 | 直接返回 PNG image 块，模型能"看见"自己写的界面 |
-
-## 接进 agent：MCP
-
-`cli/lvglui-mcp.mjs` 是一个 stdio MCP server，四个工具：
-
-| 工具 | 作用 |
-|---|---|
-| `render_ui` | 渲染并返回 PNG（image content block）+ 元数据 JSON |
-| `build_ui` | 只编译，返回错误列表 |
-| `preview_ui` | 打开实时窗口 |
-| `doctor` | 环境自检 |
-
-VSCode（Copilot agent 模式）把 `mcp.example.json` 里的内容并进你的 `mcp.json` 即可；
-Claude Code 用 `claude mcp add lvglui -- node <绝对路径>\cli\lvglui-mcp.mjs`。
-任何支持 MCP 的客户端同理 —— 路径必须是绝对路径。
-
-模型侧的标准循环：
-
-```
-读 ui_entry.c → 改布局/颜色 → render_ui → 看图 → 不满意就再改
-```
-
-## 写界面的约定
-
-界面代码在 `components/app_ui/screen1_c.c` —— **同一份文件既给固件编，也给预览编**。
-它顶部有一个**参数区**，所有坐标、尺寸、颜色都在那里：
+## UI 契约
 
 ```c
-#define TITLE_Y         15
-#define ROW_R_Y         60
-#define ACCENT          0x2196F3
+/* ui.h */
+lv_obj_t *ui_start(lv_obj_t *parent);
 ```
 
-下面的 `ui_build()` 才写控件逻辑。改外观 = 改参数区，不需要读逻辑代码。
+- `parent == NULL`：创建并返回根 screen
+- `parent != NULL`：在父对象里建页面，返回页面根
 
-几点硬约束（和固件保持一致）：
+业务数据只通过 `ui_port.h`：
 
-- 画布固定 **240×320**，按这个尺寸排版；
-- 颜色用 `lv_color_hex(0xRRGGBB)`；
-- 不要在这里做业务逻辑（串口、SPI、数据采集都在 `main/app_ui.c`、`main.c` 里）；
-- 控件名要和 Pro 项目一致（`slider_r/g/b`、`button_1`），业务代码用 `lv_obj_find_by_name()` 找它们；
-- 只用 LVGL 公开 API，别用 `lv_*_private`。
-
-## 热重载是怎么做到的
-
-`preview.exe` 只负责窗口和消息循环，**完全不含 LVGL**；LVGL 和你的界面一起被编进 `ui.dll`。
-保存 `ui_entry.c` → 壳检测到改动 → 卸载旧 DLL（整个引擎状态一起丢弃）→ 重新编译 → 加载新 DLL → 重画。
-因为引擎整个被卸载重建，不存在悬空 `lv_obj_t` 指针，这是热重载最容易崩的地方。
-
-编译发生在 `preview.exe` 的子进程里，日志写到 `out/build.log`；编译失败时窗口保留上一帧，终端会打印
-`BUILD FAILED`。另外，如果你在别的终端手动跑了 `build.bat`，窗口也会检测到新的 `ui.dll` 并自动换上去。
-
-## 已知限制
-
-- 需要 VS2022 的 C++ 工具链（`cl.exe`）。没有的话 `lvglui.bat doctor` 会告诉你缺什么。
-- 热重载会重置界面状态（滑块归零、输入框清空）。做交互态预览时才需要担心。
-- 中文字体要先自己转 `.c`（`lv_font_conv`），默认只有 Montserrat，中文显示为方块。
-- 触摸/按键事件在 PC 上用鼠标模拟，行为与真机不完全一致。
-- 渲染是确定性的：**故意不读真实时间**，动画类界面在 PNG 里只会看到第 12 帧。
-
-## 从 Pro 的 XML 搬到 C
-
-搬运记录、XML→C 对照表、以及接到固件要改的那两行：见
-[`docs/LVGL_UI_C_ROUTE.md`](../../docs/LVGL_UI_C_ROUTE.md)。
-
-## 设计背景
-
-架构取舍、为什么不用 LVGL Pro 的 CLI 或它的 wasm 运行时，见
-[`docs/LVGL_UI_PREVIEW_DESIGN.md`](../../docs/LVGL_UI_PREVIEW_DESIGN.md)。
-
-## M1 之后：用 CLI 对任意 ESP-IDF 工程工作
-
-```bat
-rem 在任何目录，指向一个工程
-node cli\lvglui.mjs doctor  --project D:\\path\\to\\project
-node cli\lvglui.mjs init    --project D:\\path\\to\\project   rem 生成 components/app_ui/ 四件套 + lvglui.json
-node cli\lvglui.mjs render  --project D:\\path\\to\\project   rem 出图（JSON 里有 png 路径与 names）
-node cli\lvglui.mjs preview --project D:\\path\\to\\project   rem 开实时窗口
+```c
+/* ui_port.h —— 由用户在 main/ui_port_impl.c 实现强符号 */
+float ui_port_get_temperature(void);
+float ui_port_get_humidity(void);
+void  ui_port_set_relay(bool on);
 ```
 
-不传 `--project` 就用当前目录，并自动往上找带 `project()` 的 `CMakeLists.txt`。
+- UI 层只声明/调用 `ui_port_*`，不碰业务状态
+- `ui_template` 里的 `ui_port_stub.c` 在 PC 构建时提供桩；固件构建时是空 TU，用户在 `main/ui_port_impl.c` 提供强符号
+- 缺实现会在链接期报错，不会悄悄编过
 
-**它会自己找这几样东西**（`cli/project.mjs`）：
+控件命名用 `ui_set_name(obj, "val_temp")`（内部包了 `LV_USE_OBJ_NAME`），渲染时 `tree.json` 和 PNG 一起给你。
 
-| 找什么 | 顺序 |
-|---|---|
-| 界面目录 | `lvglui.json` → `components/app_ui` → `components/ui` → `ui` → `src/ui` → 按 `lv_screen_load(xxx_create(...))` 调用点反查 → 按 `xxx_create` 定义反查 |
-| 入口函数 | `lvglui.json` → 调用点 → 定义 |
-| 配置 | 工程的 `sdkconfig` → 内置默认（`host/lv_conf.h`） |
-| LVGL | 工程 `managed_components/lvgl__lvgl` → `vendor/lvgl`（工具自带，28 MB） |
+## 命令
 
-构建产物在 `build/<工程名>-<路径哈希>/`，所以多个工程共用这一个工具目录也不会互相踩。
+| 命令 | 作用 |
+| --- | --- |
+| `render` | 编译 + 跑 12 帧 + 输出 PNG/tree/meta（默认命令） |
+| `build` | 只编译 host 渲染器 |
+| `watch` | 监听 `uiDir` 的 `.c/.h`，防抖 300ms 后重渲 |
+| `serve` | HTTP + SSE 预览（`127.0.0.1:8765`，占用自动 +1） |
+| `preview` | 打开实时窗口；保存→重编→换 `ui.dll`，失败保留旧画面 |
+| `init` | 注入 UI 组件骨架和 `lvglui.json` |
+| `doctor` | 检查工程、IDF/LVGL 版本、工具链、显示配置、平台头 |
+| `dsh install` | 生成 DSH bundle 用的 `dsh/cordis.patch.yml` 并打印安装命令 |
+| `help` | 帮助 |
 
-**`vendor/lvgl`** 是给"连 LVGL 都还没拉进来"的新工程兜底的；工程自己装了 lvgl 就永远用工程那份，保证预览和固件是同一个版本。打包插件时这一份应该放进 vsix，而不是扔进用户的仓库。
+常用选项：
 
-`render` 的输出比原来多了两个字段：
+- `--project <dir>`：工程目录（默认 `LVGLUI_PROJECT` 或 cwd）
+- `--width/--height`：显示尺寸；工程没配置时必填
+- `--frames <n>`：渲染帧数，默认 12
+- `--out <dir>`：输出**目录**（不是 PNG 文件路径）
+- `--no-build`：复用已有 `shot.exe`（shot 缺失时会自动构建）
+- `--json`：`render/build/doctor` 只向 stdout 输出 JSON，日志走 stderr
+- `--no-render`：`init` 后不做空白页渲染
 
-- `config`：`"sdkconfig"`（配置跟着固件走）或 `"default"`（工程还没 configure 过）
-- `names`：界面里所有 `lv_obj_set_name()` 起的名字。固件靠这些名字 `lv_obj_find_by_name()` 找控件，**名字写错在真机上是"界面能显示但点了没反应"，没有任何报错**。
+退出码：`0` 成功，`1` 构建/渲染失败，`2` 用法/配置错误，`3` 运行时/IO 错误。
 
-`shot.bat` 现在只是 `lvglui.bat render` 的快捷方式。`build.bat` 保留给 `preview.exe` 的热重载用（它走的是"工具就在工程里"的老路径，只对 my_lcd 有效）。
+## 在 DSH 里用
 
-## 看界面：三种方式，按"想不想切窗口"选
-
-```bat
-rem 1) 钉在屏幕边上的小窗（300x460，无地址栏，不用切窗口）——改一行存一下，图自己变
-lvglui.bat serve --open
-
-rem 2) 普通网页：自己在浏览器里开 http://127.0.0.1:8765，可以放到第二块屏
-lvglui.bat serve --port 8765
-
-rem 3) 只要一张图（给模型看、给 CI 比对）
-lvglui.bat render --out out\preview.png
+```bash
+node cli/lvglui.mjs dsh install
+# 输出里会给你：
+# plugin_manager install_bundle target="file:D:/LVGL_preview/dsh"
 ```
 
-窗口大小可以调：`--open --width 264 --height 400`。
+然后重启 DSH。重启后：
 
-`serve` 的页面自己带着状态行（成功时显示字节数/编译耗时，失败时显示第一条编译错误），
-文件改了 300 ms 防抖后自动重渲——所以不管是你在 VSCode 里手改，还是让模型在别的地方改，
-窗口里都会自己刷新，不需要回来问"改好了吗"。
+- 技能列表里出现 `lvglui`
+- 工具里出现 `mcp__lvglui__*`（`detect_project`、`init_ui`、`render_ui`、`build_ui`、`doctor`、`preview_ui`）
 
-页面内部走的是 SSE（`/events`），`/shot.png` 拿图、`/state` 拿最近一次的 JSON。
-以后做 VS Code 插件时，webview 里直接用这套地址就行，不用另写一套。
+直接说：
+
+> 在 D:/my_project 里把 home 页改成三个传感器卡片，数据走 ui_port，改完截图给我看。
+
+skill 的约束是文字约定：只改 `uiDir`、不改 `main`/BSP/`sdkconfig`/工程 CMakeLists、不 include 平台头、业务只走 `ui_port`。没有强制写入围栏，也没有自动审计。
+
+> 移动工具目录后必须重新跑 `dsh install`，再重新安装 bundle；`dsh/cordis.patch.yml` 是生成文件，已被 `.gitignore` 忽略。
+
+## 限制
+
+- 只做**静态**渲染 + 控件树；不做点击/滑动/动画模拟
+- 只支持 **16bit** 色深
+- Windows + ESP-IDF 6.x + LVGL 9.x
+- 不拉 LVGL 组件、不配 component manager、不搭显示/触摸 BSP
+- 不做写入审计；UI 层边界靠 skill 约定
+
+## 故障排查
+
+| 现象 | 处理 |
+| --- | --- |
+| `需要 ESP-IDF 6.x，发现 5.3` | 在 `lvglui.json` 写 `idfPath`，或修 `.vscode/settings.json` 的 `idf.currentSetup` |
+| `需要 LVGL 9.x` | 检查 `managed_components/lvgl__lvgl` 或 `lvglDir` |
+| 找不到 vcvars/cmake/ninja | 装 VS2022 C++ 工具；或在 `lvglui.json.build` 写显式路径 |
+| `cannot determine display resolution` | 传 `--width/--height`，或写 `lvglui.json.display`，或让 `sdkconfig` 有唯一的一对宽高 |
+| 编译失败 | 看 `<project>/.lvglui/build/build.log` 和 `render --json` 的 `diagnostics` |
+| 中文显示方块 | 预览侧已强制开 CJK；固件侧要自己开 `CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_*_CJK` |
+| `--no-build` 仍构建 | `shot.exe` 不存在时这是预期行为；先跑一次完整 `render` |
+
+## 开发
+
+```bash
+npm test                 # 单测
+npm run test:integration # 集成（my_lcd 不存在时跳过）
+node cli/lvglui.mjs doctor --project D:/esps3_test/my_lcd
+```
+
+回归基线：`D:/esps3_test/my_lcd`、240×320、`sensor_ui_create`、12 帧、PNG sha256 `8f3a7ad7e177e94953547ae30e47149d5139de638d87a56449a2f9ea03ddd287`。
