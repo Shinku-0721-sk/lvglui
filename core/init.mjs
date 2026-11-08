@@ -6,6 +6,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { DISPLAY_MAX, DISPLAY_MIN } from './config.mjs';
+
 const CONFIG_FILE = 'lvglui.json';
 const TEMPLATE_DIR = 'ui-template';
 const DEFAULT_UI_DIR = 'components/app_ui';
@@ -35,8 +37,8 @@ const SNIPPET = [
   '',
 ].join('\n');
 
-function isPositiveInteger(value) {
-  return Number.isInteger(value) && value > 0;
+function isDisplayDimension(value) {
+  return Number.isInteger(value) && value >= DISPLAY_MIN && value <= DISPLAY_MAX;
 }
 
 function isNonEmptyString(value) {
@@ -66,6 +68,29 @@ function statOrNull(target) {
 // `rel` is inside `root` when it is neither the root itself nor an escape.
 function insideRoot(rel) {
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+}
+
+// Walk every existing segment below `rootAbs`; a junction/symlink ancestor
+// would redirect mkdir/copy outside the project even though the lexical
+// relative path looks contained. Windows junctions are symlinks to lstat.
+function findLinkedSegment(rootAbs, targetAbs) {
+  const rel = path.relative(rootAbs, targetAbs);
+  if (rel === '' || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+    return null;
+  }
+  let current = rootAbs;
+  for (const part of rel.split(path.sep)) {
+    current = path.join(current, part);
+    let stat;
+    try {
+      stat = fs.lstatSync(current);
+    } catch (e) {
+      if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return null;
+      throw new Error(`failed to inspect ${current}: ${e.message}`);
+    }
+    if (stat.isSymbolicLink()) return current;
+  }
+  return null;
 }
 
 // Recursive .c scan, symlinks skipped so a link loop cannot hang init. Any
@@ -169,9 +194,9 @@ export function initProject(ctx, { width, height, force = false } = {}) {
     const display = ctx.display !== null && typeof ctx.display === 'object' ? ctx.display : {};
     const resolvedWidth = width ?? display.width;
     const resolvedHeight = height ?? display.height;
-    if (!isPositiveInteger(resolvedWidth) || !isPositiveInteger(resolvedHeight)) {
+    if (!isDisplayDimension(resolvedWidth) || !isDisplayDimension(resolvedHeight)) {
       problems.push(
-        `width/height 必须是正整数，来自 --width/--height 或 ctx.display；` +
+        `width/height 必须是 ${DISPLAY_MIN}..${DISPLAY_MAX} 的整数，来自 --width/--height 或 ctx.display；` +
           `收到 width=${show(resolvedWidth)}, height=${show(resolvedHeight)}；init 不会默认 240x320`,
       );
     }
@@ -207,22 +232,29 @@ export function initProject(ctx, { width, height, force = false } = {}) {
     if (!insideRoot(relTarget)) {
       problems.push(`uiDir 必须位于工程根内: "${uiDirSpec}" (${targetAbs})`);
     } else {
-      const targetStat = statOrNull(targetAbs);
-      if (targetStat !== null && !targetStat.isDirectory()) {
-        problems.push(`uiDir 已存在且不是目录，拒绝覆盖: ${targetAbs}`);
-      } else if (targetStat !== null) {
-        const existingC = findCFiles(targetAbs);
-        if (existingC.length > 0) {
-          const first = toPosix(path.relative(rootAbs, existingC[0]));
-          problems.push(
-            `uiDir 已存在且包含 .c 文件，拒绝覆盖: ${first}` +
-              (existingC.length > 1 ? ` (等共 ${existingC.length} 个)` : ''),
-          );
-        }
-        for (const rel of TEMPLATE_FILES) {
-          const dest = path.join(targetAbs, rel);
-          if (statOrNull(dest) !== null) {
-            problems.push(`目标文件已存在，拒绝覆盖: ${toPosix(path.relative(rootAbs, dest))}`);
+      const linked = findLinkedSegment(rootAbs, targetAbs);
+      if (linked !== null) {
+        problems.push(
+          `uiDir 路径包含符号链接，拒绝写入: ${toPosix(path.relative(rootAbs, linked))} (${targetAbs})`,
+        );
+      } else {
+        const targetStat = statOrNull(targetAbs);
+        if (targetStat !== null && !targetStat.isDirectory()) {
+          problems.push(`uiDir 已存在且不是目录，拒绝覆盖: ${targetAbs}`);
+        } else if (targetStat !== null) {
+          const existingC = findCFiles(targetAbs);
+          if (existingC.length > 0) {
+            const first = toPosix(path.relative(rootAbs, existingC[0]));
+            problems.push(
+              `uiDir 已存在且包含 .c 文件，拒绝覆盖: ${first}` +
+                (existingC.length > 1 ? ` (等共 ${existingC.length} 个)` : ''),
+            );
+          }
+          for (const rel of TEMPLATE_FILES) {
+            const dest = path.join(targetAbs, rel);
+            if (statOrNull(dest) !== null) {
+              problems.push(`目标文件已存在，拒绝覆盖: ${toPosix(path.relative(rootAbs, dest))}`);
+            }
           }
         }
       }

@@ -139,3 +139,63 @@ test('initProject rejects an existing uiDir containing a .c file', () => {
     cleanup(base);
   }
 });
+
+test('initProject accepts explicit width/height when ctx.display is absent', () => {
+  const { base, root } = makeRoot();
+  try {
+    const result = initProject(fixtureCtx(root, { display: null }), { width: 240, height: 320 });
+
+    assert.equal(result.ok, true, result.problems.join('; '));
+    const config = JSON.parse(fs.readFileSync(result.configFile, 'utf8'));
+    assert.deepEqual(config.display, { width: 240, height: 320, colorDepth: 16 });
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('initProject rejects display dimensions outside the config range', () => {
+  const { base, root } = makeRoot();
+  try {
+    // core/config.mjs only accepts 16..2048; init must not write a config that
+    // every later command would reject.
+    const result = initProject(fixtureCtx(root, { display: null }), { width: 2560, height: 1440 });
+
+    assert.equal(result.ok, false);
+    assert.ok(result.problems.some((p) => p.includes('16') && p.includes('2048')));
+    assert.deepEqual(result.created, []);
+    assert.ok(!fs.existsSync(path.join(root, 'lvglui.json')));
+    assert.ok(!fs.existsSync(path.join(root, 'components', 'app_ui')));
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('initProject rejects a junction on a target ancestor', (t) => {
+  const { base, root } = makeRoot();
+  try {
+    const outside = path.join(base, 'outside');
+    fs.mkdirSync(outside);
+    const link = path.join(root, 'components');
+    try {
+      // A junction looks contained lexically but redirects every write.
+      fs.symlinkSync(outside, link, 'junction');
+    } catch (e) {
+      if (e.code === 'EPERM' || e.code === 'EACCES' || e.code === 'UNKNOWN') {
+        t.skip(`junction creation not permitted: ${e.code}`);
+        return;
+      }
+      throw e;
+    }
+
+    const result = initProject(fixtureCtx(root));
+
+    assert.equal(result.ok, false);
+    assert.ok(result.problems.some((p) => /符号链接|symlink|junction/i.test(p)));
+    assert.deepEqual(result.created, []);
+    assert.ok(!fs.existsSync(path.join(outside, 'app_ui')));
+    assert.ok(!fs.existsSync(path.join(outside, 'lvglui.json')));
+    assert.ok(!fs.existsSync(path.join(root, 'lvglui.json')));
+  } finally {
+    cleanup(base);
+  }
+});

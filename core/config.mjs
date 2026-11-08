@@ -5,6 +5,11 @@ import path from 'node:path';
 
 const CONFIG_FILE = 'lvglui.json';
 
+// Bounds shared with `init` so it cannot write a config that normalization
+// would immediately reject.
+export const DISPLAY_MIN = 16;
+export const DISPLAY_MAX = 2048;
+
 const DEFAULTS = {
   schema: 1,
   idfPath: '',
@@ -116,11 +121,11 @@ export function normalizeConfig(data, root) {
     } else {
       const before = problems.length;
       const { width, height, colorDepth } = data.display;
-      if (!Number.isInteger(width) || width < 16 || width > 2048) {
-        problems.push(`display.width must be an integer between 16 and 2048, got ${JSON.stringify(width)}`);
+      if (!Number.isInteger(width) || width < DISPLAY_MIN || width > DISPLAY_MAX) {
+        problems.push(`display.width must be an integer between ${DISPLAY_MIN} and ${DISPLAY_MAX}, got ${JSON.stringify(width)}`);
       }
-      if (!Number.isInteger(height) || height < 16 || height > 2048) {
-        problems.push(`display.height must be an integer between 16 and 2048, got ${JSON.stringify(height)}`);
+      if (!Number.isInteger(height) || height < DISPLAY_MIN || height > DISPLAY_MAX) {
+        problems.push(`display.height must be an integer between ${DISPLAY_MIN} and ${DISPLAY_MAX}, got ${JSON.stringify(height)}`);
       }
       if (colorDepth !== 16) {
         problems.push(`display.colorDepth must be 16, got ${JSON.stringify(colorDepth)}`);
