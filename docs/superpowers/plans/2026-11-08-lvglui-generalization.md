@@ -842,6 +842,7 @@ git commit -m "feat(core): discover MSVC toolchain and build host with generated
 ```js
 {
   ok,
+  toolDir,
   root,
   configFile,
   config,
