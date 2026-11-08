@@ -220,6 +220,15 @@ export function discoverProject(startDir, { toolRoot, requireUi = true } = {}) {
   }
 
   // ---- Entry function: config first, then call sites, then definitions ---
+  // Call sites commonly live outside the UI component (for example
+  // main/app_ui.c), so entry detection scans the whole project root.
+  let projectSources = sources;
+  try {
+    projectSources = walkSources(root);
+  } catch (e) {
+    problems.push(e.message);
+  }
+
   let entry = null;
   let entryHow = null;
   const configuredEntry = typeof conf.entry === 'string' ? conf.entry : '';
@@ -230,10 +239,10 @@ export function discoverProject(startDir, { toolRoot, requireUi = true } = {}) {
 
   if (!entry) {
     try {
-      entry = entryFromCallSites(sources);
+      entry = entryFromCallSites(projectSources);
       if (entry) entryHow = 'call-site';
       if (!entry) {
-        entry = entryFromDefinitions(sources);
+        entry = entryFromDefinitions(projectSources);
         if (entry) entryHow = 'definition';
       }
     } catch (e) {

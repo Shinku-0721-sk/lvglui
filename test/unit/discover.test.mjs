@@ -39,6 +39,20 @@ test('detects uiDir, entry from call site, and sources', (t) => {
   assert.equal(p.sources.length, 1);
 });
 
+test('detects a call site in main outside the uiDir', (t) => {
+  const root = fixture(t);
+  fs.mkdirSync(path.join(root, 'main'));
+  fs.writeFileSync(path.join(root, 'main', 'app_ui.c'),
+    '#include "lvgl.h"\nvoid app_start(void) { lv_screen_load(sensor_ui_create()); }\n');
+  fs.writeFileSync(path.join(root, 'components', 'app_ui', 'src', 'home.c'),
+    'lv_obj_t *sensor_ui_create(lv_obj_t *parent) { return parent; }\n');
+  const p = discoverProject(root);
+  assert.equal(p.ok, true);
+  assert.equal(p.uiDir, path.resolve(root, 'components/app_ui'));
+  assert.equal(p.entry, 'sensor_ui_create');
+  assert.equal(p.entryHow, 'call-site');
+});
+
 test('walkSources ignores build and hidden dirs', (t) => {
   const root = fixture(t);
   fs.mkdirSync(path.join(root, 'components', 'app_ui', 'build'));
