@@ -29,7 +29,7 @@ function defaultConfig() {
 }
 
 function stringField(value, fallback, name, problems) {
-  if (value === undefined || value === null) return fallback;
+  if (value === undefined) return fallback;
   if (typeof value !== 'string') {
     problems.push(`${name} must be a string, got ${JSON.stringify(value)}`);
     return fallback;
@@ -59,9 +59,11 @@ export function readConfig(root) {
   const file = path.join(path.resolve(root), CONFIG_FILE);
   if (!fs.existsSync(file)) return { file: null, data: null, error: null };
   try {
-    return { file, data: JSON.parse(fs.readFileSync(file, 'utf8')), error: null };
+    let text = fs.readFileSync(file, 'utf8');
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    return { file, data: JSON.parse(text), error: null };
   } catch (e) {
-    return { file, data: null, error: `failed to read ${CONFIG_FILE}: ${e.message}` };
+    return { file, data: null, error: `failed to read ${file}: ${e.message}` };
   }
 }
 
@@ -96,7 +98,10 @@ export function normalizeConfig(data, root) {
   config.uiDir = stringField(data.uiDir, '', 'uiDir', problems);
   if (config.uiDir !== '') {
     const why = relativePathProblem(rootAbs, config.uiDir);
-    if (why) problems.push(`uiDir must stay inside project: "${config.uiDir}" (${why})`);
+    if (why) {
+      problems.push(`uiDir must stay inside project: "${config.uiDir}" (${why})`);
+      config.uiDir = '';
+    }
   }
 
   config.entry = stringField(data.entry, '', 'entry', problems);
@@ -126,7 +131,7 @@ export function normalizeConfig(data, root) {
     }
   }
 
-  if (data.build !== undefined && data.build !== null && !isPlainObject(data.build)) {
+  if (data.build !== undefined && !isPlainObject(data.build)) {
     problems.push(`build must be an object, got ${JSON.stringify(data.build)}`);
     config.build = { ...DEFAULTS.build };
   } else {
@@ -137,14 +142,18 @@ export function normalizeConfig(data, root) {
     build.dir = stringField(build.dir, DEFAULTS.build.dir, 'build.dir', problems);
     if (build.dir === '') {
       problems.push('build.dir must not be empty');
+      build.dir = DEFAULTS.build.dir;
     } else {
       const why = relativePathProblem(rootAbs, build.dir);
-      if (why) problems.push(`build.dir must stay inside project: "${build.dir}" (${why})`);
+      if (why) {
+        problems.push(`build.dir must stay inside project: "${build.dir}" (${why})`);
+        build.dir = DEFAULTS.build.dir;
+      }
     }
     config.build = build;
   }
 
-  if (data.font !== undefined && data.font !== null && !isPlainObject(data.font)) {
+  if (data.font !== undefined && !isPlainObject(data.font)) {
     problems.push(`font must be an object, got ${JSON.stringify(data.font)}`);
     config.font = { ...DEFAULTS.font };
   } else {
@@ -171,7 +180,14 @@ export function writeConfig(root, config) {
 export function projectPaths(root, config) {
   const rootAbs = path.resolve(root);
   const stateDir = path.join(rootAbs, '.lvglui');
-  const buildDir = path.resolve(rootAbs, config?.build?.dir || DEFAULTS.build.dir);
+  const configured = config?.build?.dir;
+  const dir = configured === undefined ? DEFAULTS.build.dir : configured;
+  if (typeof dir !== 'string' || dir === '') {
+    throw new Error(`build.dir must stay inside project: ${JSON.stringify(dir)} (expected a non-empty relative path)`);
+  }
+  const why = relativePathProblem(rootAbs, dir);
+  if (why) throw new Error(`build.dir must stay inside project: "${dir}" (${why})`);
+  const buildDir = path.resolve(rootAbs, dir);
   const outDir = path.join(stateDir, 'out');
   const lvConfPath = path.join(buildDir, 'lv_conf.h');
   return { stateDir, buildDir, outDir, lvConfPath };
