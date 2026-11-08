@@ -131,8 +131,8 @@ git config user.email "lvglui@local"
   "type": "module",
   "bin": { "lvglui": "cli/lvglui.mjs" },
   "scripts": {
-    "test": "node --test test/unit",
-    "test:integration": "node --test test/integration"
+    "test": "node --test \"test/unit/*.test.mjs\"",
+    "test:integration": "node --test \"test/integration/*.test.mjs\""
   },
   "engines": { "node": ">=22" }
 }
