@@ -1,0 +1,141 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { initProject, integrationSnippet } from '../../core/init.mjs';
+
+const TEMPLATE_FILES = [
+  'CMakeLists.txt',
+  'include/ui.h',
+  'include/ui_port.h',
+  'include/ui_theme.h',
+  'include/pages/home.h',
+  'src/ui.c',
+  'src/ui_theme.c',
+  'src/ui_port_stub.c',
+  'src/pages/home.c',
+];
+
+// One temporary container per test with a dedicated project directory, so a
+// rejected `../x` target resolves to a known sibling we can assert was not
+// created instead of a real path outside the temp tree.
+function makeRoot() {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'lvglui-init-'));
+  const root = path.join(base, 'project');
+  fs.mkdirSync(root);
+  return { base, root };
+}
+
+function fixtureCtx(root, overrides = {}) {
+  return {
+    root,
+    config: {},
+    uiDir: 'components/app_ui',
+    idf: { path: path.join(root, 'esp-idf') },
+    lvgl: { dir: path.join(root, 'managed_components', 'lvgl__lvgl') },
+    display: { width: 240, height: 320, colorDepth: 16 },
+    ...overrides,
+  };
+}
+
+function cleanup(base) {
+  fs.rmSync(base, { recursive: true, force: true });
+}
+
+test('initProject creates the template files and config, then refuses a second run', () => {
+  const { base, root } = makeRoot();
+  try {
+    const result = initProject(fixtureCtx(root));
+
+    assert.equal(result.ok, true, result.problems.join('; '));
+    const uiDir = path.join(root, 'components', 'app_ui');
+    for (const rel of TEMPLATE_FILES) {
+      assert.ok(fs.existsSync(path.join(uiDir, rel)), `missing ${rel}`);
+    }
+    const expectedCreated = TEMPLATE_FILES.map((rel) => `components/app_ui/${rel}`);
+    assert.deepEqual([...result.created].sort(), expectedCreated.sort());
+    assert.equal(result.configFile, path.join(root, 'lvglui.json'));
+
+    const config = JSON.parse(fs.readFileSync(result.configFile, 'utf8'));
+    assert.equal(config.schema, 1);
+    assert.equal(config.uiDir, 'components/app_ui');
+    assert.equal(config.entry, 'ui_start');
+    assert.deepEqual(config.display, { width: 240, height: 320, colorDepth: 16 });
+    assert.deepEqual(config.build, { dir: '.lvglui/build' });
+    assert.deepEqual(config.font, { cjk: true });
+    assert.equal(config.idfPath, 'esp-idf');
+    assert.equal(config.lvglDir, 'managed_components/lvgl__lvgl');
+
+    assert.match(result.snippet, /#include "ui\.h"/);
+    assert.match(result.snippet, /ui_start\(NULL\);/);
+    assert.equal(integrationSnippet(config), result.snippet);
+
+    // The managed component directory name is the REQUIRES name; the template
+    // token must never leak into the generated project.
+    const cmake = fs.readFileSync(path.join(uiDir, 'CMakeLists.txt'), 'utf8');
+    assert.match(cmake, /REQUIRES\s+lvgl__lvgl/);
+    assert.ok(!cmake.includes('__LVGL_COMPONENT__'));
+
+    const second = initProject(fixtureCtx(root));
+    assert.equal(second.ok, false);
+    assert.ok(second.problems.some((p) => p.includes('lvglui.json 已存在')));
+    assert.deepEqual(second.created, []);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('initProject rejects a uiDir that escapes the project root', () => {
+  const { base, root } = makeRoot();
+  try {
+    const escaped = path.join(base, 'x');
+    const result = initProject(fixtureCtx(root, { uiDir: '../x' }));
+
+    assert.equal(result.ok, false);
+    assert.ok(result.problems.length > 0);
+    assert.ok(!fs.existsSync(escaped), 'wrote outside the project root');
+    assert.ok(!fs.existsSync(path.join(root, 'lvglui.json')));
+    assert.deepEqual(result.created, []);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('initProject refuses to invent a display size', () => {
+  const { base, root } = makeRoot();
+  try {
+    const noDisplay = initProject(fixtureCtx(root, { display: null }));
+    assert.equal(noDisplay.ok, false);
+    assert.ok(noDisplay.problems.some((p) => /width|height|display|分辨率/i.test(p)));
+    assert.ok(!fs.existsSync(path.join(root, 'lvglui.json')));
+    assert.ok(!fs.existsSync(path.join(root, 'components', 'app_ui')));
+
+    // Half a pair is not a display either.
+    const half = initProject(fixtureCtx(root, { display: undefined }), { width: 240 });
+    assert.equal(half.ok, false);
+    assert.ok(!fs.existsSync(path.join(root, 'lvglui.json')));
+    assert.ok(!fs.existsSync(path.join(root, 'components', 'app_ui')));
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('initProject rejects an existing uiDir containing a .c file', () => {
+  const { base, root } = makeRoot();
+  try {
+    const uiDir = path.join(root, 'components', 'app_ui');
+    fs.mkdirSync(path.join(uiDir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(uiDir, 'src', 'legacy.c'), 'int legacy;\n');
+
+    const result = initProject(fixtureCtx(root));
+
+    assert.equal(result.ok, false);
+    assert.ok(result.problems.some((p) => p.includes('.c')));
+    assert.ok(!fs.existsSync(path.join(root, 'lvglui.json')));
+    assert.ok(!fs.existsSync(path.join(uiDir, 'CMakeLists.txt')));
+    assert.equal(fs.readFileSync(path.join(uiDir, 'src', 'legacy.c'), 'utf8'), 'int legacy;\n');
+  } finally {
+    cleanup(base);
+  }
+});
