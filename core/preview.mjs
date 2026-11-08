@@ -98,7 +98,7 @@ export function previewArgs(ctx, options = {}) {
   const problem = argsProblem(ctx);
   if (problem) throw new Error(`previewArgs: ${problem}`);
 
-  const buildDir = ctx.buildDir;
+  const buildDir = path.resolve(ctx.buildDir);
   const buildCmd = text(opts.buildCmd) !== ''
     ? opts.buildCmd
     : path.join(buildDir, 'build.cmd');
@@ -175,14 +175,16 @@ export function previewProject(ctx, options = {}) {
   } catch (e) {
     return failure('spawn', `cannot start ${exe}: ${e.message}`, args);
   }
-  if (!child || typeof child.pid !== 'number') {
-    return failure('spawn', `cannot start ${exe}`, args);
-  }
+  if (!child) return failure('spawn', `cannot start ${exe}`, args);
 
-  // spawn errors are asynchronous; log them without pretending the window ran.
+  // spawn errors are asynchronous; attach the handler before checking pid so a
+  // failed launch cannot become an unhandled 'error' event.
   child.on('error', (error) => {
     console.error(`[preview] ${error.message}`);
   });
+  if (typeof child.pid !== 'number') {
+    return failure('spawn', `cannot start ${exe}`, args);
+  }
 
   return { ok: true, pid: child.pid, args, error: null };
 }

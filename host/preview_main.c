@@ -362,6 +362,10 @@ static void finish_build(void)
         }
         else {
             printf("[host] new ui.dll could not be loaded; keeping the previous UI\n");
+            /* Remember the bad stamp so poll_files does not retry it every
+             * 100ms. The next source build or external rebuild changes the
+             * stamp and gets a fresh attempt. */
+            g_loaded_stamp = dll_stamp();
             set_title(L"reload failed (see build.log)");
         }
     }
@@ -416,6 +420,11 @@ static void poll_files(void)
             if(load_ui() == 0) {
                 set_title(L"ready");
                 printf("[host] reloaded ok\n");
+            }
+            else {
+                printf("[host] ui.dll reload failed; keeping the previous UI\n");
+                g_loaded_stamp = stamp;
+                set_title(L"reload failed (see build.log)");
             }
         }
     }
@@ -566,7 +575,9 @@ int wmain(int argc, wchar_t **argv)
     src_fingerprint(g_fp, sizeof(g_fp));
     if(load_ui() != 0) {
         printf("[host] initial ui.dll load failed - fix the build then save again\n");
-        set_title(L"build failed (see build.log)");
+        /* Do not hot-loop on an unloadable ui.dll; wait for a changed stamp. */
+        g_loaded_stamp = dll_stamp();
+        set_title(L"reload failed (see build.log)");
     }
     else {
         set_title(L"ready");
