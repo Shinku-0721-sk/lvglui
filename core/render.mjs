@@ -160,10 +160,10 @@ export function renderProject(ctx, options = {}) {
     error: null,
   };
 
-  const fail = (stage, message, diagnostics = result.diagnostics) => {
+  const fail = (stage, message, diagnostics = result.diagnostics, extra = null) => {
     result.ok = false;
     result.diagnostics = diagnostics;
-    result.error = { stage, message };
+    result.error = { stage, message, ...(extra ?? {}) };
     return result;
   };
 
@@ -194,20 +194,23 @@ export function renderProject(ctx, options = {}) {
     ? opts.frames
     : DEFAULT_FRAMES;
   const rebuild = opts.rebuild !== false;
-
-  const resolved = resolveToolchain(ctx);
-  if (!resolved.ok) return fail('toolchain', resolved.message);
-  const buildCtx = { ...ctx, toolchain: resolved.toolchain };
-
-  try {
-    ensureLvConf(ctx, warnings);
-  } catch (e) {
-    return fail('lvconf', `cannot create lv_conf.h: ${e.message}`);
-  }
-
-  // Rebuild when asked; also when shot.exe is missing, even with rebuild:false.
+  // Resolve the toolchain only when a build is actually needed: a warm
+  // rebuild:false run must succeed on a machine without MSVC/CMake/Ninja.
   const shotExisted = fs.existsSync(shotPath);
-  if (rebuild || !shotExisted) {
+  const needsBuild = rebuild || !shotExisted;
+  let builtBecauseMissing = false;
+
+  if (needsBuild) {
+    const resolved = resolveToolchain(ctx);
+    if (!resolved.ok) return fail('toolchain', resolved.message);
+    const buildCtx = { ...ctx, toolchain: resolved.toolchain };
+
+    try {
+      ensureLvConf(ctx, warnings);
+    } catch (e) {
+      return fail('lvconf', `cannot create lv_conf.h: ${e.message}`);
+    }
+
     const build = buildHost(buildCtx);
     result.buildMs = build.durationMs;
     if (!build.ok) {
@@ -218,15 +221,20 @@ export function renderProject(ctx, options = {}) {
         // fall back to captured stderr
       }
       const diagnostics = parseDiagnostics(log, { root: ctx.root, toolDir: ctx.toolDir });
-      const summary = errorLines(diagnostics);
+      const merged = mergeWarnings(diagnostics, warnings);
+      const summary = errorLines(merged);
+      const buildLog = typeof build.logPath === 'string' && build.logPath !== ''
+        ? build.logPath
+        : tail(build.stderr);
       return fail(
         'build',
         `build failed (exit ${build.exitCode ?? '?'})${summary ? `: ${summary}` : ''}`,
-        mergeWarnings(diagnostics, warnings),
+        merged,
+        { diagnostics: merged, buildLog },
       );
     }
+    builtBecauseMissing = !rebuild;
   }
-  const builtBecauseMissing = !rebuild && !shotExisted;
 
   if (!fs.existsSync(shotPath)) {
     return fail('build', `shot.exe not found after build: ${shotPath}`);
