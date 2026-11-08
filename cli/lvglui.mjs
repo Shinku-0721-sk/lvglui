@@ -419,7 +419,7 @@ async function runInit(flags) {
   });
   if (!next.ok) {
     for (const problem of next.problems) console.error(`[lvglui] ${problem}`);
-    return 0;
+    return 2;
   }
 
   const toolchain = findToolchainFor(next);
@@ -429,11 +429,11 @@ async function runInit(flags) {
   const rendered = renderProject(next, { frames: flags.frames, outDir: flags.out });
   if (rendered.ok) {
     console.log(`[lvglui] png=${rendered.pngPath} meta=${rendered.metaPath} tree=${rendered.treePath}`);
-  } else {
-    reportRenderFailure(rendered);
+    return 0;
   }
 
-  return 0;
+  reportRenderFailure(rendered);
+  return exitForRender(rendered);
 }
 
 async function runPreview(flags) {
