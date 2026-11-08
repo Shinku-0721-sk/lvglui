@@ -354,10 +354,10 @@ Expected: FAIL，模块不存在。
 - 根：`startDir` 有 `lvglui.json` → 立即返回；否则向上找 `CMakeLists.txt` 且文件内容匹配 `/\bproject\s*\(/`，同时同目录有 `sdkconfig` 或 `main/`。
 - 搜索到根即停；不要越过卷根。
 - `uiDir`：配置优先（空字符串视为未配置）；否则按 `components/app_ui`、`components/ui`、`ui`、`main/ui` 找含 `.c` 的目录；只接受 root 内。
-- `entry`：配置优先（空字符串视为未配置）；否则 `entryFromCallSites`；再否则 `entryFromDefinitions`。
-- `entryFromCallSites`：`lv_(screen|scr)_load\s*\(\s*(\w+)\s*\(`，取第一个。
+- `entry`：配置优先（空字符串视为未配置）；否则先收集 uiDir `sources` 里 `lv_obj_t *xxx_create(...)` 的定义名，按优先级选调用点：① 目标函数定义在 uiDir 内；② 调用点在 `<root>/main/`；③ 稳定排序的第一个。都没有调用点时，先 `entryFromDefinitions(uiDir sources)`，再全工程 `entryFromDefinitions`。
+- `entryFromCallSites`：`lv_(screen|scr)_load\s*\(\s*(\w+)\s*\(`；按上述优先级选择，不再无脑取第一个。
 - `entryFromDefinitions`：`lv_obj_t\s*\*\s*(\w+)\s*\(\s*(lv_obj_t\s*\*\s*\w*|void)\s*\)`。
-- 源码：`sources` 只返回 `walkSources(uiDir)`；entry 的调用点/定义扫描范围是整个工程根 `walkSources(root)`，否则 `main/` 里的 `lv_screen_load(xxx_create())` 会漏；两者都跳过 `build`、`.git`、`node_modules`、`managed_components`、`test`，深度 ≤ 6。
+- 源码：`sources` 只返回 `walkSources(uiDir)`；entry 的调用点/定义扫描范围是整个工程根 `walkSources(root)`，否则 `main/` 里的 `lv_screen_load(xxx_create())` 会漏；两者都跳过 `build`、`.git`、`node_modules`、`managed_components`、`test`，深度 ≤ 6。入口选择的真实回归：my_lcd 的 `design/UI/sim/main.c:29` 会先匹配 `screen_components_create`，但 `sensor_ui_create` 定义在 uiDir，必须选后者。
 - `requireUi` 为 false 时不因缺 uiDir 失败（init 用）。
 
 - [ ] **Step 4: 跑测试并提交**
