@@ -1598,6 +1598,7 @@ Expected: FAIL（旧 CLI 无 export）。
 - 所有命令先 `loadContext({ startDir: process.cwd(), projectDir: flags.project, cliWidth, cliHeight, requireUi: command !== 'init' })`。
 - 入口用 `if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();` 保护（`import { pathToFileURL } from 'node:url'`），测试 import 不能执行命令。
 - `render`：`renderProject`；打印 `[lvglui] png=... meta=... tree=...`；失败打印诊断。
+- `--json`：`render`/`build`/`doctor` 只把结果 JSON 输出到 stdout（日志走 stderr），供集成测试解析。
 - `build`：`buildHost`；打印 exit code/log。
 - `doctor`：`findToolchain` 后 `doctor`；逐条打印 `ok/warn/fail`；有 fail 退出 1。
 - `preview`：`previewProject`。

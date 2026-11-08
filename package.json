@@ -1,0 +1,12 @@
+{
+  "name": "lvglui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "lvglui": "cli/lvglui.mjs" },
+  "scripts": {
+    "test": "node --test test/unit",
+    "test:integration": "node --test test/integration"
+  },
+  "engines": { "node": ">=22" }
+}
