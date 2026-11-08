@@ -463,7 +463,7 @@ git commit -m "feat(core): discover ESP-IDF 6.x per project"
 
 **Interfaces:**
 - `readLvglVersion(lvglDir)` → `{ ok, version: { major, minor, patch }, header, problem }`。
-- `findLvgl({ root, config })` → `{ ok, dir, version, source, warning }`；`source` 为 `config|managed|search`。
+- `findLvgl({ root, config })` → `{ ok, dir, version, source, warning, problem }`；`source` 为 `config|managed|search`；失败时 `problem` 非空，非致命问题放 `warning`。
 
 - [ ] **Step 1: 写失败测试**
 
