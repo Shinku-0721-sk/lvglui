@@ -193,8 +193,8 @@ async function callTool(name, args = {}) {
       return toolResult(
         {
           ok: false,
-          stage: r.stage,
-          message: r.message,
+          stage: r.error?.stage ?? r.stage,
+          message: r.error?.message ?? r.message,
           diagnostics: r.diagnostics,
           buildLog: r.error?.buildLog ?? r.buildLog ?? null,
           problems: ctx.problems,
@@ -238,7 +238,7 @@ async function callTool(name, args = {}) {
       return errorResult(`无法生成构建脚本: ${e.message}`);
     }
     const r = buildHost(buildCtx, { quiet: true });
-    return toolResult({ ok: r.ok, exitCode: r.exitCode, durationMs: r.durationMs, logPath: r.logPath, script }, !r.ok);
+    return toolResult({ ok: r.ok, exitCode: r.exitCode, durationMs: r.durationMs, logPath: r.logPath, script, errors: r.stderr ? [r.stderr.trim()].filter(Boolean) : [] }, !r.ok);
   }
 
   if (name === 'doctor') {
@@ -270,6 +270,15 @@ function rpcError(id, code, message) {
 async function handle(msg) {
   const { id, method, params } = msg ?? {};
   const isNotification = id === undefined;
+
+  // JSON-RPC 2.0: notifications never receive a response. Do not run
+  // request-only methods (initialize, ping, tools/list) as notifications.
+  if (isNotification) {
+    if (method === 'notifications/initialized' || method === 'notifications/cancelled') {
+      return null;
+    }
+    return null;
+  }
 
   switch (method) {
     case 'initialize': {

@@ -23,11 +23,13 @@ function startServer() {
     windowsHide: true,
   });
   const pending = new Map();
+  const lines = [];
   let nextId = 1;
   let stderr = '';
 
   const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
   rl.on('line', (line) => {
+    lines.push(line);
     let msg;
     try {
       msg = JSON.parse(line);
@@ -48,6 +50,9 @@ function startServer() {
     child,
     get stderr() {
       return stderr;
+    },
+    get lines() {
+      return lines;
     },
     request(method, params) {
       const id = nextId++;
@@ -108,6 +113,30 @@ test('MCP negotiates 2025-03-26, lists six tools and answers ping', async () => 
   } finally {
     await srv.close();
     assert.equal(srv.stderr, '', `server wrote to stderr:\n${srv.stderr}`);
+  }
+});
+
+test('MCP falls back to the latest version and stays silent for notifications', async () => {
+  const srv = startServer();
+  try {
+    const init = await srv.request('initialize', {
+      protocolVersion: '1999-01-01',
+      capabilities: {},
+    });
+    assert.equal(init.result.protocolVersion, '2025-06-18');
+
+    const unknown = await srv.request('no/such/method', {});
+    assert.equal(unknown.error.code, -32601);
+
+    const bad = await srv.request('tools/call', {});
+    assert.equal(bad.error.code, -32602);
+
+    const before = srv.lines.length;
+    srv.child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'ping' })}\n`);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.equal(srv.lines.length, before, 'notification must not produce a response');
+  } finally {
+    await srv.close();
   }
 });
 
