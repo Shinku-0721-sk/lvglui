@@ -9,7 +9,7 @@
  * Same ui_entry.c and same LVGL sources as ui.dll, and RGB565 like the panel,
  * so the picture is what the board will show.
  *
- *   shot.exe [--out preview.png] [--frames 12]
+ *   shot.exe [--out preview.png] [--frames 12] [--tree tree.json]
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,24 +17,26 @@
 #include "ui_host.h"
 #include "png_write.h"
 
-#define W 240
-#define H 320
 #define FRAME_MS 33
 
 int main(int argc, char **argv)
 {
     const char *out = "preview.png";
     const char *raw = NULL;
+    const char *tree_path = NULL;
     int frames = 12;
 
     for(int i = 1; i < argc; ++i) {
         if(strcmp(argv[i], "--out") == 0 && i + 1 < argc) out = argv[++i];
         else if(strcmp(argv[i], "--raw") == 0 && i + 1 < argc) raw = argv[++i];
+        else if(strcmp(argv[i], "--tree") == 0 && i + 1 < argc) tree_path = argv[++i];
         else if(strcmp(argv[i], "--frames") == 0 && i + 1 < argc) frames = atoi(argv[++i]);
     }
 
-    if(ui_attach(W, H) != 0) { fprintf(stderr, "ui_attach failed\n"); return 1; }
+    if(ui_attach(LVGLUI_WIDTH, LVGLUI_HEIGHT) != 0) { fprintf(stderr, "ui_attach failed\n"); return 1; }
     for(int i = 0; i < frames; ++i) ui_tick(FRAME_MS);
+
+    if(tree_path) ui_dump_tree(tree_path);
 
     int w = 0, h = 0;
     unsigned int ver = 0;

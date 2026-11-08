@@ -10,13 +10,20 @@
 #    LVGLUI_LVGL_DIR    : LVGL 源码根
 #    LVGLUI_CONF_DIR    : 放着 lv_conf.h 的目录（每次渲染由 CLI 生成）
 #
-#    ui_obj   : ui/ui_entry.c + 你的界面 .c（与固件编译的是同一批文件）
+#    ui_obj   : host/ui_entry.c + 你的界面 .c（与固件编译的是同一批文件）
 #    ui.dll   : ui_obj + lvgl，给 preview.exe 热重载
 #    preview  : 240x320 窗口，不含任何 LVGL
 #    shot     : 无头渲染，吐出原始 RGB565 帧
 # ===========================================================================
 cmake_minimum_required(VERSION 3.20)
 project(lvglui C)
+
+# CMake 4 defaults single-config generators (Ninja) to Debug, whose /RTC1
+# conflicts with the hardcoded /O2 below (MSVC error D8016). Pick Release
+# explicitly unless the caller chose a build type, and keep /O2 conditional.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -87,7 +94,7 @@ target_compile_definitions(lvgl PUBLIC
   $<$<C_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>
 )
 if(MSVC)
-  target_compile_options(lvgl PRIVATE /utf-8 /W1 /O2)
+  target_compile_options(lvgl PRIVATE /utf-8 /W1 $<$<CONFIG:Release>:/O2>)
 endif()
 
 # ---- 界面（和固件同一批 .c）----------------------------------------------
@@ -98,21 +105,25 @@ if(APP_UI_COUNT EQUAL 0)
   message(FATAL_ERROR "${LVGLUI_UI_DIR} 里没有 .c 文件")
 endif()
 
-add_library(ui_obj OBJECT ui/ui_entry.c ${APP_UI_SOURCES})
+add_library(ui_obj OBJECT "${LVGLUI_TOOL_DIR}/host/ui_entry.c" ${APP_UI_SOURCES})
 target_include_directories(ui_obj PUBLIC
   "${LVGLUI_TOOL_DIR}/host"
+  "${LVGLUI_UI_DIR}/include"
   "${LVGLUI_UI_DIR}"
 )
-if(LVGLUI_ENTRY)
-  target_compile_definitions(ui_obj PUBLIC LVGLUI_ENTRY=${LVGLUI_ENTRY})
-endif()
+target_compile_definitions(ui_obj PRIVATE
+  LVGLUI_HOST=1
+  LVGLUI_WIDTH=${LVGLUI_WIDTH}
+  LVGLUI_HEIGHT=${LVGLUI_HEIGHT}
+  LVGLUI_ENTRY=${LVGLUI_ENTRY}
+)
 if(MSVC)
   target_compile_options(ui_obj PRIVATE /utf-8)
 endif()
 target_link_libraries(ui_obj PUBLIC lvgl)
 
 # ---- 可热重载的 UI + 引擎 -------------------------------------------------
-add_library(ui SHARED $<TARGET_OBJECTS:ui_obj> ui/ui.def)
+add_library(ui SHARED $<TARGET_OBJECTS:ui_obj> "${LVGLUI_TOOL_DIR}/host/ui.def")
 target_link_libraries(ui PRIVATE lvgl)
 set_target_properties(ui PROPERTIES PREFIX "" OUTPUT_NAME "ui")
 if(MSVC)
@@ -120,13 +131,20 @@ if(MSVC)
 endif()
 
 # ---- 窗口壳 ---------------------------------------------------------------
-add_executable(preview host/preview_main.c)
+add_executable(preview "${LVGLUI_TOOL_DIR}/host/preview_main.c")
 if(MSVC)
   target_compile_options(preview PRIVATE /utf-8)
 endif()
 
 # ---- 无头渲染 -------------------------------------------------------------
-add_executable(shot $<TARGET_OBJECTS:ui_obj> host/shot_main.c host/png_write.c)
+add_executable(shot $<TARGET_OBJECTS:ui_obj>
+  "${LVGLUI_TOOL_DIR}/host/shot_main.c"
+  "${LVGLUI_TOOL_DIR}/host/png_write.c"
+)
+target_compile_definitions(shot PRIVATE
+  LVGLUI_WIDTH=${LVGLUI_WIDTH}
+  LVGLUI_HEIGHT=${LVGLUI_HEIGHT}
+)
 target_link_libraries(shot PRIVATE lvgl)
 if(MSVC)
   target_compile_options(shot PRIVATE /utf-8)

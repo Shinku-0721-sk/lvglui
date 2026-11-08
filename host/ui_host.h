@@ -35,6 +35,10 @@ UI_EXPORT const void *ui_pixels(int *width, int *height, uint32_t *version);
 /* Tear the engine down. Called right before the DLL is unloaded. */
 UI_EXPORT void ui_detach(void);
 
+/* Write the active screen's widget tree as JSON to `path`. Never writes
+ * pixels and never triggers a refresh; a failed open is a silent no-op. */
+UI_EXPORT void ui_dump_tree(const char *path);
+
 #ifdef __cplusplus
 }
 #endif
