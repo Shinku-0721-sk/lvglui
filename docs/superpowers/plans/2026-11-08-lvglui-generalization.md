@@ -109,7 +109,7 @@
 - Create: `test/unit/smoke.test.mjs`
 
 **Interfaces:**
-- `npm test` / `node --test test/unit` 可运行。
+- `npm test` / `node --test "test/unit/*.test.mjs"` 可运行；Node 22.23.2 不接受裸目录参数。
 - `lvglui.cmd` 转发到 `cli/lvglui.mjs`，后续命令都通过它冒烟。
 
 - [ ] **Step 1: 初始化仓库**
@@ -149,6 +149,7 @@ vendor/
 test/.tmp/
 *.log
 .lvglui/
+.superpowers/
 ```
 
 - [ ] **Step 4: 写 `lvglui.cmd`**
