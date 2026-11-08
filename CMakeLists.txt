@@ -27,6 +27,8 @@ set(LVGLUI_UI_DIR "" CACHE PATH "界面源码目录")
 set(LVGLUI_LVGL_DIR "" CACHE PATH "LVGL 源码根")
 set(LVGLUI_CONF_DIR "" CACHE PATH "包含 lv_conf.h 的目录")
 set(LVGLUI_ENTRY "" CACHE STRING "界面入口函数名")
+set(LVGLUI_WIDTH "" CACHE STRING "预览宽度")
+set(LVGLUI_HEIGHT "" CACHE STRING "预览高度")
 
 # ---- 兜底：不带参数时，假定工程就是工具所在仓库 ---------------------------
 if(NOT LVGLUI_PROJECT_DIR)
@@ -47,6 +49,10 @@ if(NOT LVGLUI_ENTRY)
   message(WARNING "LVGLUI_ENTRY 未指定，兜底用 ${LVGLUI_ENTRY}（走 CLI 时不会出现这条）")
 endif()
 
+if(NOT LVGLUI_WIDTH MATCHES "^[0-9]+$" OR NOT LVGLUI_HEIGHT MATCHES "^[0-9]+$")
+  message(FATAL_ERROR "LVGLUI_WIDTH/LVGLUI_HEIGHT 必须由构建脚本传入")
+endif()
+
 if(NOT EXISTS "${LVGLUI_LVGL_DIR}/src")
   message(FATAL_ERROR "找不到 LVGL 源码：${LVGLUI_LVGL_DIR}")
 endif()
@@ -60,6 +66,7 @@ endif()
 message(STATUS "工程      : ${LVGLUI_PROJECT_DIR}")
 message(STATUS "界面目录  : ${LVGLUI_UI_DIR}")
 message(STATUS "入口函数  : ${LVGLUI_ENTRY}")
+message(STATUS "预览尺寸  : ${LVGLUI_WIDTH}x${LVGLUI_HEIGHT}")
 message(STATUS "LVGL      : ${LVGLUI_LVGL_DIR}")
 message(STATUS "配置文件  : ${LVGLUI_CONF_DIR}/lv_conf.h")
 
