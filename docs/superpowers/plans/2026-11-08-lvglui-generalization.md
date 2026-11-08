@@ -357,13 +357,13 @@ Expected: FAIL，模块不存在。
 - `entry`：配置优先（空字符串视为未配置）；否则 `entryFromCallSites`；再否则 `entryFromDefinitions`。
 - `entryFromCallSites`：`lv_(screen|scr)_load\s*\(\s*(\w+)\s*\(`，取第一个。
 - `entryFromDefinitions`：`lv_obj_t\s*\*\s*(\w+)\s*\(\s*(lv_obj_t\s*\*\s*\w*|void)\s*\)`。
-- 源码：`walkSources(uiDir)`，跳过 `build`、`.git`、`node_modules`、`managed_components`、`test`，深度 ≤ 6。
+- 源码：`sources` 只返回 `walkSources(uiDir)`；entry 的调用点/定义扫描范围是整个工程根 `walkSources(root)`，否则 `main/` 里的 `lv_screen_load(xxx_create())` 会漏；两者都跳过 `build`、`.git`、`node_modules`、`managed_components`、`test`，深度 ≤ 6。
 - `requireUi` 为 false 时不因缺 uiDir 失败（init 用）。
 
 - [ ] **Step 4: 跑测试并提交**
 
 Run: `node --test test/unit/discover.test.mjs`
-Expected: PASS 3。
+Expected: PASS（至少 3；含 main/ 调用点与 fsutil 覆盖）。
 
 ```bash
 git add core/fsutil.mjs core/discover.mjs test/unit/discover.test.mjs
