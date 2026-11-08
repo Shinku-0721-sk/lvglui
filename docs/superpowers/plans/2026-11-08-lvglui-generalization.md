@@ -1598,14 +1598,14 @@ Expected: FAIL（旧 CLI 无 export）。
 
 - [ ] **Step 2: 实现命令**
 
-- 所有命令先 `loadContext({ startDir: process.cwd(), projectDir: flags.project, cliWidth, cliHeight, requireUi: command !== 'init' })`。
+- 除 `help` 与 `dsh install` 外，所有命令先 `loadContext({ startDir: process.cwd(), projectDir: flags.project, cliWidth, cliHeight, requireUi: command !== 'init' })`。`help` 直接打印用法；`dsh install` 只需 `toolDir`，不要求工程上下文。
 - 入口用 `if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();` 保护（`import { pathToFileURL } from 'node:url'`），测试 import 不能执行命令。
 - `render`：`renderProject`；打印 `[lvglui] png=... meta=... tree=...`；失败打印诊断。
 - `--json`：`render`/`build`/`doctor` 只把结果 JSON 输出到 stdout（日志走 stderr），供集成测试解析。
 - `build`：`buildHost`；打印 exit code/log。
 - `doctor`：`findToolchain` 后 `doctor`；逐条打印 `ok/warn/fail`；有 fail 退出 1。
 - `preview`：`previewProject`。
-- `init`：`initProject`；打印 created + snippet；随后 `doctor` + 空白页 `render`（`--no-render` 可跳过）。
+- `init`：`initProject`；打印 created + snippet；成功后重新 `loadContext({projectDir: flags.project, cliWidth, cliHeight, requireUi: true})`，再 `findToolchain` + `doctor` + 空白页 `render`（`--no-render` 可跳过），否则新 UI 不会进入 ctx。
 - `watch`：`fs.watch(ctx.uiDir,{recursive:true})` + 300ms 去抖；每次 `renderProject`；Ctrl+C 退出。
 - `serve`：HTTP 200 `/`（HTML + `<img src="/shot.png">`）、`/shot.png`、`/events`（SSE）；端口 8765，占用则 +1 最多 10 次；渲染用队列，不阻塞事件循环。
 - `help`：英文/中文简短用法。
