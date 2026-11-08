@@ -26,9 +26,7 @@ function fakeTools(dir) {
   };
 }
 
-function buildConfig(tools) {
-  return { build: { vcvars: tools.vcvars, cmake: tools.cmake, ninja: tools.ninja } };
-}
+
 
 // Plan-style context with explicit, absolute, forward-slash paths.
 function planCtx(buildDir) {
@@ -362,6 +360,11 @@ test('quotes paths that contain spaces', (t) => {
     root: 'D:/my proj',
     uiDir: 'D:/my proj/components/app ui',
     lvgl: { dir: 'D:/my proj/managed components/lvgl' },
+    toolchain: {
+      vcvars: 'D:/Program Files/VS/VC/Auxiliary/Build/vcvars64.bat',
+      cmake: 'D:/Program Files/cmake/bin/cmake.exe',
+      ninja: 'D:/Program Files/ninja/ninja.exe',
+    },
   };
   const r = writeBuildScript(ctx);
   const script = fs.readFileSync(r.script, 'utf8');
@@ -369,9 +372,39 @@ test('quotes paths that contain spaces', (t) => {
   assert.ok(script.includes('"D:\\Prog Files\\lvglui tool"'));
   assert.ok(cache.includes('set(LVGLUI_TOOL_DIR "D:/Prog Files/lvglui tool" CACHE PATH "")'));
   assert.ok(cache.includes('set(LVGLUI_TOOL_DIR "D:/Prog Files/lvglui tool" CACHE PATH "")'));
+  assert.ok(script.includes('call "D:\\Program Files\\VS\\VC\\Auxiliary\\Build\\vcvars64.bat" >nul'));
+  assert.ok(script.includes('"D:\\Program Files\\cmake\\bin\\cmake.exe" -S'));
+  assert.ok(script.includes('"-DCMAKE_MAKE_PROGRAM=D:\\Program Files\\ninja\\ninja.exe"'));
+  assert.ok(script.includes('"D:\\Program Files\\cmake\\bin\\cmake.exe" --build'));
   assert.ok(cache.includes('set(LVGLUI_PROJECT_DIR "D:/my proj" CACHE PATH "")'));
   assert.ok(cache.includes('set(LVGLUI_UI_DIR "D:/my proj/components/app ui" CACHE PATH "")'));
   assert.ok(cache.includes('set(LVGLUI_LVGL_DIR "D:/my proj/managed components/lvgl" CACHE PATH "")'));
+});
+
+test('writeBuildScript rejects cmd metacharacters and control characters in paths', (t) => {
+  const buildDir = tempDir(t);
+  const base = planCtx(buildDir);
+  for (const value of ['D:/bad%path', 'D:/bad"path', 'D:/bad\npath', 'D:/bad\rpath']) {
+    assert.throws(() => writeBuildScript({ ...base, toolDir: value }), /must not contain/);
+  }
+  for (const value of ['D:/bad%root', 'D:/bad"root', 'D:/bad\nroot', 'D:/bad\rroot']) {
+    assert.throws(() => writeBuildScript({ ...base, root: value }), /must not contain/);
+  }
+});
+
+test('writeBuildScript names each missing required field', (t) => {
+  const buildDir = tempDir(t);
+  const cases = [
+    ['entry', (ctx) => { delete ctx.entry; }, /entry/],
+    ['toolDir', (ctx) => { delete ctx.toolDir; }, /toolDir/],
+    ['toolchain.cmake', (ctx) => { delete ctx.toolchain.cmake; }, /toolchain\.cmake/],
+    ['toolchain.ninja', (ctx) => { delete ctx.toolchain.ninja; }, /toolchain\.ninja/],
+  ];
+  for (const [name, remove, pattern] of cases) {
+    const ctx = planCtx(buildDir);
+    remove(ctx);
+    assert.throws(() => writeBuildScript(ctx), pattern, name);
+  }
 });
 
 test('returns absolute, existing script paths', (t) => {
@@ -445,6 +478,27 @@ test('buildHost returns ok:false for a failed build and still logs stdout and st
   assert.ok(log.indexOf('error C2065') > log.indexOf('compiling'));
 });
 
+test('buildHost separates stdout and stderr in build.log', (t) => {
+  const buildDir = tempDir(t, 'lvglui-host-');
+  const r = buildHost(planCtx(buildDir), {
+    run: () => ({ status: 1, stdout: 'out', stderr: 'err' }),
+  });
+  assert.equal(r.ok, false);
+  const log = fs.readFileSync(r.logPath, 'utf8');
+  assert.ok(log.includes('out\nerr'));
+});
+
+test('buildHost returns logPath:null when build.log cannot be written', (t) => {
+  const buildDir = tempDir(t, 'lvglui-host-');
+  fs.mkdirSync(path.join(buildDir, 'build.log'));
+  const r = buildHost(planCtx(buildDir), {
+    run: () => ({ status: 0, stdout: 'built', stderr: '' }),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.logPath, null);
+  assert.match(r.stderr, /build\.log/i);
+});
+
 test('buildHost reports a deliberately missing cmake as a failed build with a log', (t) => {
   const buildDir = tempDir(t, 'lvglui-host-');
   const ctx = planCtx(buildDir);
@@ -470,6 +524,34 @@ test('buildHost never throws on a spawn error and logs the message', (t) => {
   assert.match(r.stderr, /ENOENT/);
   const log = fs.readFileSync(r.logPath, 'utf8');
   assert.match(log, /ENOENT/);
+});
+
+test('falls back to ProgramFiles when ProgramFiles(x86) has no vswhere', (t) => {
+  const base = tempDir(t);
+  const pf86 = path.join(base, 'PF86');
+  fs.mkdirSync(pf86);
+  const programFiles = path.join(base, 'PF');
+  const vswhere = touch(path.join(programFiles, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe'));
+  const install = path.join(base, 'VS');
+  const vcvars = touch(path.join(install, 'VC', 'Auxiliary', 'Build', 'vcvars64.bat'));
+  const cmake = touch(path.join(base, 'cmake.exe'));
+  const ninja = touch(path.join(base, 'ninja.exe'));
+  const calls = [];
+
+  const r = findToolchain({
+    root: base,
+    config: { build: { cmake, ninja } },
+    env: { 'ProgramFiles(x86)': pf86, ProgramFiles: programFiles },
+    run: (cmd, args) => {
+      calls.push({ cmd, args });
+      if (cmd === vswhere) return { status: 0, stdout: `${install}\r\n`, stderr: '' };
+      return NOT_FOUND;
+    },
+  });
+
+  assert.equal(r.ok, true, r.problems.join('\n'));
+  assert.equal(r.vcvars, vcvars);
+  assert.equal(calls.filter((call) => call.cmd === vswhere).length, 1);
 });
 
 test('buildHost never throws on invalid ctx and reports the validation error', (t) => {

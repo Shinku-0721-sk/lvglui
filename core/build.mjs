@@ -86,6 +86,9 @@ function cmdPath(value, label) {
   if (text.includes('"')) {
     throw new Error(`writeBuildScript: ${label} must not contain a double quote: ${text}`);
   }
+  if (text.includes('\r') || text.includes('\n')) {
+    throw new Error(`writeBuildScript: ${label} must not contain a carriage return or newline`);
+  }
   return text.replace(/\//g, '\\');
 }
 
@@ -97,8 +100,14 @@ function cmdQuote(value, label) {
 // argument is an escape sequence, so paths are normalized rather than escaped.
 function cmakeQuote(value, label) {
   const text = String(value);
+  if (text.includes('%')) {
+    throw new Error(`writeBuildScript: ${label} must not contain "%": ${text}`);
+  }
   if (text.includes('"')) {
     throw new Error(`writeBuildScript: ${label} must not contain a double quote: ${text}`);
+  }
+  if (text.includes('\r') || text.includes('\n')) {
+    throw new Error(`writeBuildScript: ${label} must not contain a carriage return or newline`);
   }
   return `"${text.replace(/\\/g, '/')}"`;
 }
@@ -176,7 +185,8 @@ export function writeBuildScript(ctx) {
  * exact command plus combined stdout/stderr is always attempted.
  *
  * @param {object} ctx same shape as `writeBuildScript`
- * @param {{quiet?: boolean, run?: Function}} [options]
+ * @param {{quiet?: boolean, run?: Function}} [options] `quiet` is accepted for
+ *   call-site symmetry; `buildHost` always captures output and never prints it.
  * @returns {{ok: boolean, exitCode: number|null, durationMs: number,
  *   stdout: string, stderr: string, logPath: string|null}}
  */
@@ -234,10 +244,18 @@ export function buildHost(ctx, options = {}) {
     exitCode = null;
   }
 
-  let logText = `$ ${command}\n\n${stdout}${stderr}`;
+  let combined = stdout;
+  if (stderr) {
+    if (combined && !combined.endsWith('\n')) combined += '\n';
+    combined += stderr;
+  }
+
+  let logText = `$ ${command}\n\n${combined}`;
   if (!logText.endsWith('\n')) logText += '\n';
+  let writtenLogPath = null;
   try {
     writeIfChanged(logPath, logText);
+    writtenLogPath = logPath;
   } catch (e) {
     stderr = stderr ? `${stderr}\n${e.message}` : e.message;
   }
@@ -248,6 +266,6 @@ export function buildHost(ctx, options = {}) {
     durationMs: elapsed(),
     stdout,
     stderr,
-    logPath,
+    logPath: writtenLogPath,
   };
 }

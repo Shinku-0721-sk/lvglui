@@ -118,18 +118,28 @@ function findVcvarsAuto(env, exists, run) {
     if (safeExists(exists, candidate)) return { path: candidate, source: 'vcinstall' };
   }
 
-  const programFiles = env?.['ProgramFiles(x86)'] || env?.ProgramFiles;
-  if (typeof programFiles !== 'string' || programFiles.trim() === '') return null;
-  const vswhere = path.join(programFiles.trim(), 'Microsoft Visual Studio', 'Installer', 'vswhere.exe');
-  if (!safeExists(exists, vswhere)) return null;
+  // Prefer the x86 Program Files view, but fall back to ProgramFiles when that
+  // view exists yet has no vswhere.exe installed.
+  const programFilesCandidates = [];
+  for (const value of [env?.['ProgramFiles(x86)'], env?.ProgramFiles]) {
+    if (typeof value !== 'string' || value.trim() === '') continue;
+    const resolved = value.trim();
+    if (!programFilesCandidates.includes(resolved)) programFilesCandidates.push(resolved);
+  }
 
-  const result = safeRun(run, vswhere, VSWHERE_ARGS);
-  if (!runSucceeded(result)) return null;
-  const installation = firstLine(result.stdout);
-  if (!installation) return null;
+  for (const programFiles of programFilesCandidates) {
+    const vswhere = path.join(programFiles, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe');
+    if (!safeExists(exists, vswhere)) continue;
 
-  const candidate = path.join(installation, 'VC', 'Auxiliary', 'Build', 'vcvars64.bat');
-  return safeExists(exists, candidate) ? { path: candidate, source: 'vswhere' } : null;
+    const result = safeRun(run, vswhere, VSWHERE_ARGS);
+    if (!runSucceeded(result)) continue;
+    const installation = firstLine(result.stdout);
+    if (!installation) continue;
+
+    const candidate = path.join(installation, 'VC', 'Auxiliary', 'Build', 'vcvars64.bat');
+    if (safeExists(exists, candidate)) return { path: candidate, source: 'vswhere' };
+  }
+  return null;
 }
 
 function findOnPath(name, exists, run) {
