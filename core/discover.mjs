@@ -8,8 +8,6 @@ import { readText } from './fsutil.mjs';
 
 const COMMON_UI_DIRS = ['components/app_ui', 'components/ui', 'ui', 'main/ui'];
 const SKIP_DIRS = new Set(['build', 'node_modules', 'managed_components', 'test']);
-const CALL_SITE_RE = /lv_(?:screen|scr)_load\s*\(\s*([A-Za-z_]\w*)\s*\(/;
-const DEFINITION_RE = /lv_obj_t\s*\*\s*([A-Za-z_]\w*)\s*\(\s*(?:lv_obj_t\s*\*\s*\w*|void)\s*\)/;
 
 function isDirectory(p) {
   try {
@@ -95,24 +93,28 @@ function hasUiSources(dir) {
   return walkSources(dir).length > 0;
 }
 
-function entryFromCallSites(files) {
+function collectCallSites(files) {
+  const sites = [];
   for (const file of files) {
     const text = readText(file);
     if (text === null) continue;
-    const match = CALL_SITE_RE.exec(text);
-    if (match) return match[1];
+    const re = /lv_(?:screen|scr)_load\s*\(\s*([A-Za-z_]\w*)\s*\(/g;
+    let match;
+    while ((match = re.exec(text)) !== null) sites.push({ name: match[1], file });
   }
-  return null;
+  return sites;
 }
 
-function entryFromDefinitions(files) {
+function collectDefinitions(files) {
+  const definitions = [];
   for (const file of files) {
     const text = readText(file);
     if (text === null) continue;
-    const match = DEFINITION_RE.exec(text);
-    if (match) return match[1];
+    const re = /lv_obj_t\s*\*\s*([A-Za-z_]\w*)\s*\(\s*(?:lv_obj_t\s*\*\s*\w*|void)\s*\)/g;
+    let match;
+    while ((match = re.exec(text)) !== null) definitions.push({ name: match[1], file });
   }
-  return null;
+  return definitions;
 }
 
 function emptyResult(root, problems) {
@@ -239,11 +241,29 @@ export function discoverProject(startDir, { toolRoot, requireUi = true } = {}) {
 
   if (!entry) {
     try {
-      entry = entryFromCallSites(projectSources);
-      if (entry) entryHow = 'call-site';
-      if (!entry) {
-        entry = entryFromDefinitions(projectSources);
-        if (entry) entryHow = 'definition';
+      // A UI entry is normally defined in the UI component. Prefer a call
+      // site whose target exists there, then the firmware entry under main/,
+      // then the first call site in stable sorted order.
+      const uiDirDefinitions = collectDefinitions(sources);
+      const uiDirNames = new Set(uiDirDefinitions.map((definition) => definition.name));
+      const callSites = collectCallSites(projectSources);
+      const mainDir = path.join(root, 'main');
+      const pick =
+        callSites.find((site) => uiDirNames.has(site.name)) ||
+        callSites.find((site) => isInside(mainDir, site.file)) ||
+        callSites[0];
+
+      if (pick) {
+        entry = pick.name;
+        entryHow = 'call-site';
+      } else {
+        // No call site: prefer a definition in the UI component before
+        // falling back to the whole project.
+        const definition = uiDirDefinitions[0] || collectDefinitions(projectSources)[0];
+        if (definition) {
+          entry = definition.name;
+          entryHow = 'definition';
+        }
       }
     } catch (e) {
       problems.push(e.message);

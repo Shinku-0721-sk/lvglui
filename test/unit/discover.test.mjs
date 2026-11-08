@@ -22,6 +22,19 @@ function fixture(t) {
   return root;
 }
 
+// A root with no sources yet, so each entry-selection case starts clean.
+function emptyProject(t) {
+  const root = tempDir(t);
+  fs.writeFileSync(path.join(root, 'CMakeLists.txt'), 'cmake_minimum_required(VERSION 3.16)\nproject(demo)\n');
+  fs.writeFileSync(path.join(root, 'sdkconfig'), 'CONFIG_LV_COLOR_DEPTH=16\n');
+  return root;
+}
+
+function write(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text);
+}
+
 test('finds project root from nested dir', (t) => {
   const root = fixture(t);
   const hit = findProjectRoot(path.join(root, 'components', 'app_ui'));
@@ -51,6 +64,55 @@ test('detects a call site in main outside the uiDir', (t) => {
   assert.equal(p.uiDir, path.resolve(root, 'components/app_ui'));
   assert.equal(p.entry, 'sensor_ui_create');
   assert.equal(p.entryHow, 'call-site');
+});
+
+test('prefers the call site whose target is defined in the uiDir', (t) => {
+  const root = emptyProject(t);
+  // `design` sorts before `main`, so a naive first-call-site scan picks the
+  // simulator entry instead of the firmware entry.
+  write(path.join(root, 'components', 'app_ui', 'sensor.c'),
+    'lv_obj_t *sensor_ui_create(lv_obj_t *parent) { return parent; }\n');
+  write(path.join(root, 'design', 'UI', 'screens', 'screen.c'),
+    'lv_obj_t *screen_components_create(void) { return NULL; }\n');
+  write(path.join(root, 'design', 'UI', 'sim', 'main.c'),
+    'void sim(void) { lv_screen_load(screen_components_create()); }\n');
+  write(path.join(root, 'main', 'app_ui.c'),
+    'void app_ui_init(void) { lv_screen_load(sensor_ui_create(NULL)); }\n');
+
+  const p = discoverProject(root);
+  assert.equal(p.ok, true);
+  assert.equal(p.entry, 'sensor_ui_create');
+  assert.equal(p.entryHow, 'call-site');
+  assert.deepEqual(p.sources, [path.resolve(root, 'components/app_ui/sensor.c')]);
+});
+
+test('prefers a main call site over an earlier sorted call site', (t) => {
+  const root = emptyProject(t);
+  write(path.join(root, 'components', 'app_ui', 'helper.c'), 'void helper(void) {}\n');
+  write(path.join(root, 'design', 'UI', 'sim', 'main.c'),
+    'void sim(void) { lv_screen_load(screen_components_create()); }\n');
+  write(path.join(root, 'main', 'app_ui.c'),
+    'void app_ui_init(void) { lv_screen_load(sensor_ui_create(NULL)); }\n');
+
+  const p = discoverProject(root);
+  assert.equal(p.ok, true);
+  assert.equal(p.entry, 'sensor_ui_create');
+  assert.equal(p.entryHow, 'call-site');
+});
+
+test('prefers a uiDir definition over an earlier sorted project definition', (t) => {
+  const root = emptyProject(t);
+  // `components/aaa` sorts before `components/app_ui`.
+  write(path.join(root, 'components', 'aaa', 'screen.c'),
+    'lv_obj_t *screen_components_create(void) { return NULL; }\n');
+  write(path.join(root, 'components', 'app_ui', 'sensor.c'),
+    'lv_obj_t *sensor_ui_create(lv_obj_t *parent) { return parent; }\n');
+
+  const p = discoverProject(root);
+  assert.equal(p.ok, true);
+  assert.equal(p.entry, 'sensor_ui_create');
+  assert.equal(p.entryHow, 'definition');
+  assert.deepEqual(p.sources, [path.resolve(root, 'components/app_ui/sensor.c')]);
 });
 
 test('walkSources ignores build and hidden dirs', (t) => {
