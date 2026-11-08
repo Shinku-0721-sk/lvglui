@@ -1,443 +1,884 @@
 #!/usr/bin/env node
 // lvglui —— 用 C 写的 LVGL 界面，在 PC 上无头渲染成图 / 实时预览。
 //
-//   node cli/lvglui.mjs render  [--project <dir>] [--out <png>] [--frames 12] [--no-build] [--quiet]
-//   node cli/lvglui.mjs build   [--project <dir>]
-//   node cli/lvglui.mjs watch   [--project <dir>] [--out <png>]
-//   node cli/lvglui.mjs serve   [--project <dir>] [--port 8765]
-//   node cli/lvglui.mjs preview [--project <dir>]
-//   node cli/lvglui.mjs init    [--project <dir>]
-//   node cli/lvglui.mjs doctor  [--project <dir>]
-//
-// --project 默认是当前目录（会自动往上找带 project() 的 CMakeLists.txt）。
-// render 把结果以 JSON 打到 stdout：{ ok, png, width, height, bytes, entry, names, timings }
-// watch  每行一个 JSON（每重渲一次一行），给 VS Code 面板之类的宿主读。
-import { existsSync, mkdirSync, readFileSync, watch as fsWatch, writeFileSync } from 'node:fs';
+// 所有工程探测都交给 core/context.mjs（loadContext）；本文件只做参数解析、
+// 命令编排、退出码和文本/JSON 输出，不复制核心逻辑。
+import fs from 'node:fs';
 import http from 'node:http';
-import { spawn } from 'node:child_process';
 import path from 'node:path';
-import { build, context, doctor, preview, render, TOOL_DIR } from './core.mjs';
+import { spawn } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const VALUE_FLAGS = new Set(['project', 'out', 'frames', 'entry', 'port', 'width', 'height']);
+import { loadContext } from '../core/context.mjs';
+import { renderProject } from '../core/render.mjs';
+import { findToolchain } from '../core/toolchain.mjs';
+import { doctor } from '../core/doctor.mjs';
+import { buildHost, writeBuildScript } from '../core/build.mjs';
+import { previewProject } from '../core/preview.mjs';
+import { initProject } from '../core/init.mjs';
+import { parseDiagnostics } from '../core/diagnostics.mjs';
+import { DISPLAY_MAX, DISPLAY_MIN } from '../core/config.mjs';
 
-function parseArgs(argv) {
-  const flags = {};
-  const rest = [];
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a.startsWith('--')) {
-      const key = a.slice(2);
-      if (VALUE_FLAGS.has(key)) flags[key] = argv[++i];
-      else flags[key] = true;
-    } else {
-      rest.push(a);
-    }
-  }
-  return { flags, rest };
+const TOOL_DIR = path.resolve(import.meta.dirname, '..');
+
+const COMMANDS = new Set([
+  'render',
+  'build',
+  'watch',
+  'serve',
+  'preview',
+  'init',
+  'doctor',
+  'dsh install',
+  'help',
+]);
+
+const VALUE_FLAGS = new Set(['project', 'width', 'height', 'frames', 'out', 'port']);
+const NUMBER_FLAGS = new Set(['width', 'height', 'frames', 'port']);
+const KNOWN_FLAGS = new Set([
+  'project',
+  'width',
+  'height',
+  'frames',
+  'out',
+  'port',
+  'json',
+  'force',
+  'noBuild',
+  'noRender',
+  'help',
+]);
+
+const FRAMES_MAX = 10000;
+const PORT_MAX = 65535;
+
+const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
+
+用法:
+  node cli/lvglui.mjs <command> [options]
+
+命令:
+  render       渲染当前界面到 <project>/.lvglui/out（默认命令）
+  build        只编译 host 渲染器
+  watch        监听 UI 源码变化并持续重渲
+  serve        启动 HTTP 预览（127.0.0.1:8765，端口占用时自动 +1）
+  preview      打开实时预览窗口
+  init         在现有 ESP-IDF 工程中创建 UI 组件
+  doctor       检查工程 / 工具链 / 显示配置
+  dsh install  生成 DeepSeek Harness 插件（当前版本可能不可用）
+  help         显示本帮助
+
+选项:
+  --project <dir>   工程目录（默认 LVGLUI_PROJECT 或当前目录）
+  --width <n>       显示宽度（工程未配置 display 时必填，不会默认 240x320）
+  --height <n>      显示高度
+  --frames <n>      渲染帧数（默认 12）
+  --out <dir>       渲染输出目录（默认 <project>/.lvglui/out）
+  --no-build        渲染时跳过编译，直接复用已有 shot.exe
+  --json            render / build / doctor 只向 stdout 输出结果 JSON，日志走 stderr
+  --force           init 兼容参数（v1 不覆盖已有文件）
+  --no-render       init 后不做空白页渲染
+  --port <n>        serve 起始端口（默认 8765）
+
+退出码: 0 成功；1 构建/渲染失败；2 用法或配置错误；3 运行时/IO 错误`;
+
+function camelCase(key) {
+  return key.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
 }
 
-function fail(obj) {
-  console.error(JSON.stringify(obj, null, 2));
-  process.exit(1);
-}
-
-function ctxOrFail(flags) {
-  const ctx = context(flags.project);
-  if (!ctx.ok) fail({ ok: false, stage: 'detect', problems: ctx.problems, root: ctx.root });
-  if (flags.entry) { ctx.entry = String(flags.entry); ctx.entryHow = 'cli'; }
-  return ctx;
-}
-
-const HOME_C = `/**
- * 界面入口。工具 / 模型只改 components/app_ui 里的文件。
+/**
+ * Parse argv without touching the filesystem or environment beyond the
+ * documented LVGLUI_PROJECT default.
  *
- * 规则（很重要）：
- *   1. 只依赖 lvgl.h —— 不要 include driver/*.h、esp_*.h，否则 PC 上编不过
- *   2. 每个业务要用的控件，都用 lv_obj_set_name() 起个名字，名字就是契约
- *   3. 参数（颜色/尺寸/位置）尽量放在文件顶部的宏里，改起来一眼能看到
+ * @param {string[]} argv
+ * @returns {{command:string, flags:object, positionals:string[]}}
  */
-#include "lvgl.h"
-#include "home.h"
+export function parseArgs(argv = []) {
+  const flags = {};
+  const positionals = [];
 
-#define COLOR_BG      0x12151C
-#define COLOR_TEXT    0xE6E9F0
-#define COLOR_ACCENT  0x9429FF
-
-lv_obj_t * home_create(lv_obj_t * parent)
-{
-    lv_obj_t * root = lv_obj_create(parent);
-    lv_obj_set_size(root, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_bg_color(root, lv_color_hex(COLOR_BG), 0);
-    lv_obj_set_style_border_width(root, 0, 0);
-    lv_obj_set_style_pad_all(root, 0, 0);
-    lv_obj_set_scroll_dir(root, LV_DIR_NONE);
-
-    lv_obj_t * title = lv_label_create(root);
-    lv_obj_set_name(title, "title");
-    lv_label_set_text(title, "Hello");
-    lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 16);
-
-    return root;
-}
-`;
-
-const HOME_H = `#ifndef HOME_H
-#define HOME_H
-
-#include "lvgl.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/** parent 传 NULL 时创建一个新屏幕 */
-lv_obj_t * home_create(lv_obj_t * parent);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* HOME_H */
-`;
-
-const APP_UI_CMAKELISTS = `# 界面组件：只依赖 lvgl，不依赖任何驱动/业务代码
-idf_component_register(
-    SRC_DIRS "."
-    INCLUDE_DIRS "."
-    REQUIRES lvgl__lvgl
-)
-`;
-
-function init(flags) {
-  const ctx = context(flags.project);
-  const root = ctx.root;
-  const uiRel = 'components/app_ui';
-  const uiDir = path.join(root, uiRel);
-  const created = [];
-  mkdirSync(uiDir, { recursive: true });
-  for (const [name, text] of [
-    ['home.c', HOME_C],
-    ['home.h', HOME_H],
-    ['CMakeLists.txt', APP_UI_CMAKELISTS],
-  ]) {
-    const dest = path.join(uiDir, name);
-    if (!existsSync(dest)) { writeFileSync(dest, text, 'utf8'); created.push(dest); }
-  }
-  const confFile = path.join(root, 'lvglui.json');
-  if (!existsSync(confFile)) {
-    writeFileSync(confFile, `${JSON.stringify({ uiDir: uiRel, entry: 'home_create' }, null, 2)}\n`, 'utf8');
-    created.push(confFile);
-  }
-
-  const next = context(flags.project);
-  const result = {
-    ok: next.ok,
-    root,
-    uiDir: next.uiDir,
-    entry: next.entry,
-    created,
-    problems: next.problems,
-  };
-  if (next.ok) result.render = render(next, { out: path.join(TOOL_DIR, 'out', 'home.png') });
-  return result;
-}
-
-/**
- * 盯着界面目录：谁改了（手改、DSH 里的模型改、git checkout）都重渲一次。
- * onRender(json, ctx, outPath) 每渲一次调一次。
- */
-function makeWatcher(flags, onRender) {
-  const ctx = ctxOrFail(flags);
-  const out = path.resolve(flags.out || path.join(TOOL_DIR, 'out', 'preview.png'));
-  let timer = null;
-  let busy = false;
-  let queued = false;
-  let closed = false;
-
-  const run = () => {
-    if (closed) return;
-    if (busy) { queued = true; return; }
-    busy = true;
-    let r;
-    try {
-      r = render(ctx, { out, frames: flags.frames ? Number(flags.frames) : 12 });
-    } catch (e) {
-      r = { ok: false, stage: 'internal', png: null, errors: [{ msg: e.message }] };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (typeof arg !== 'string') continue;
+    if (!arg.startsWith('--')) {
+      positionals.push(arg);
+      continue;
     }
-    busy = false;
-    if (closed) return;
-    onRender({ t: new Date().toISOString(), ...r }, ctx, out);
-    if (queued) { queued = false; schedule(); }
-  };
 
-  const schedule = () => {
-    clearTimeout(timer);
-    timer = setTimeout(run, 300);
-  };
+    let key = arg.slice(2);
+    let inline;
+    const eq = key.indexOf('=');
+    if (eq !== -1) {
+      inline = key.slice(eq + 1);
+      key = key.slice(0, eq);
+    }
+    if (key === '') continue;
 
-  const watcher = fsWatch(ctx.uiDir, { recursive: true }, (evt, file) => {
-    if (!file || !/\.(c|h)$/i.test(file)) return;
-    schedule();
+    let value = inline;
+    if (value === undefined && VALUE_FLAGS.has(key)) {
+      const next = argv[i + 1];
+      if (typeof next === 'string' && !next.startsWith('--')) {
+        value = next;
+        i++;
+      }
+    }
+
+    const name = camelCase(key);
+    if (VALUE_FLAGS.has(key)) {
+      flags[name] = value === undefined
+        ? true
+        : NUMBER_FLAGS.has(key)
+          ? Number(value)
+          : value;
+    } else {
+      flags[name] = value === undefined ? true : value;
+    }
+  }
+
+  let command = positionals.shift() ?? 'render';
+  if (command === 'dsh') {
+    const sub = positionals.shift();
+    if (sub === 'install') command = 'dsh install';
+    else if (sub !== undefined) {
+      positionals.unshift(sub);
+      command = 'dsh';
+    }
+  }
+
+  if (flags.project === undefined) {
+    flags.project = process.env.LVGLUI_PROJECT || process.cwd();
+  }
+  if (flags.help === true) command = 'help';
+
+  return { command, flags, positionals };
+}
+
+function writeJson(value) {
+  process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+// renderProject keeps the PNG Buffer and the parsed tree for programmatic
+// callers; neither belongs in a CLI JSON line (the Buffer alone is megabytes).
+function renderResult(result) {
+  const copy = { ...result };
+  delete copy.png;
+  delete copy.tree;
+  return copy;
+}
+
+function exitForRender(result) {
+  switch (result.error?.stage) {
+    case 'build':
+      return 1;
+    case 'ctx':
+    case 'toolchain':
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+function printDiagnostics(diagnostics) {
+  for (const entry of diagnostics?.errors ?? []) {
+    const location = entry.file
+      ? `${entry.file}${entry.line ? `:${entry.line}` : ''}`
+      : '';
+    const code = entry.code ? ` ${entry.code}` : '';
+    console.error(`[lvglui] ${location ? `${location} ` : ''}${entry.severity ?? 'error'}${code}: ${entry.message}`);
+  }
+  for (const hint of diagnostics?.hints ?? []) {
+    console.error(`[lvglui] hint: ${hint}`);
+  }
+}
+
+function reportRenderFailure(result) {
+  const stage = result.error?.stage ?? 'unknown';
+  console.error(`[lvglui] render failed (${stage}): ${result.error?.message ?? 'unknown error'}`);
+  if (result.error?.buildLog) console.error(`[lvglui] build log: ${result.error.buildLog}`);
+  printDiagnostics(result.diagnostics);
+}
+
+function loadFor(command, flags) {
+  return loadContext({
+    startDir: process.cwd(),
+    projectDir: flags.project,
+    cliWidth: flags.width,
+    cliHeight: flags.height,
+    requireUi: command !== 'init',
   });
-
-  run();  // 先渲一次，打开页面/面板立刻有图
-  return {
-    ctx,
-    out,
-    schedule,
-    info: {
-      event: 'watching',
-      uiDir: ctx.uiDir,
-      entry: ctx.entry,
-      project: ctx.root,
-      config: ctx.sdkconfig ? 'sdkconfig' : 'default',
-    },
-    stop() {
-      closed = true;
-      clearTimeout(timer);
-      try { watcher.close(); } catch { /* ignore */ }
-    },
-  };
 }
 
-/** watch：每渲一次往 stdout 打一行 JSON，给宿主（VS Code 面板等）读 */
-function watchLoop(flags) {
-  const w = makeWatcher(flags, (json) => console.log(JSON.stringify(json)));
-  console.log(JSON.stringify(w.info));
-  const stop = () => { w.stop(); process.exit(0); };
-  process.on('SIGINT', stop);
-  process.on('SIGTERM', stop);
+function reportContextFailure(ctx, json) {
+  const problems = ctx.problems?.length > 0 ? ctx.problems : ['工程上下文无效'];
+  for (const problem of problems) console.error(`[lvglui] ${problem}`);
+  if (json) {
+    writeJson({ ok: false, stage: 'ctx', root: ctx.root ?? null, problems });
+  }
+  return 2;
 }
 
-const PAGE = `<!doctype html>
-<html lang="zh-CN"><meta charset="utf-8">
-<title>lvglui 预览</title>
-<style>
-  :root { color-scheme: dark; }
-  body { margin:0; background:#0f1116; color:#c9d1d9; font:13px/1.5 ui-monospace,Consolas,monospace;
-         display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; }
-  #wrap { padding:16px; }
-  img { display:block; width:240px; height:320px; image-rendering:pixelated;
-        border-radius:6px; box-shadow:0 0 0 1px #2a2f3a, 0 8px 30px #0008; }
-  #st { margin-top:12px; text-align:center; min-height:2.4em; color:#7d8590; }
-  #st b { color:#3fb950; } #st .err { color:#f85149; }
-  #st a.err { text-decoration:underline; cursor:pointer; }
-  #st br + span { font-size:12px; }
-</style>
-<div id="wrap">
-  <img id="shot" alt="还没渲出来">
-  <div id="st">渲染中…</div>
-</div>
-<script>
-  const img = document.getElementById('shot');
-  const st = document.getElementById('st');
-  let n = 0;
-  function bust() { img.src = '/shot.png?t=' + Date.now() + '&n=' + (++n); }
-  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-  function jump(msg) {
-    const m = String(msg).match(/^(.*?)\\((\\d+)(?:,(\\d+))?\\):\\s*(.*)$/);
-    if (!m) return null;
-    const f = m[1].replace(/\\\\/g, '/');
-    const line = m[2];
-    const col = m[3] || '1';
-    return {
-      url: 'vscode://file/' + encodeURI(f) + ':' + line + ':' + col,
-      label: f.split('/').pop() + ':' + line + ':' + col,
-      rest: m[4],
-    };
+function printChecks(checks, { json = false } = {}) {
+  for (const check of checks) {
+    if (json && check.status !== 'fail') continue;
+    const line = `[${check.status}] ${check.id}: ${check.message}`;
+    if (check.status === 'fail') console.error(line);
+    else console.log(line);
+    if (check.detail && !json) console.log(`       ${check.detail}`);
   }
-  function status(d) {
-    if (!d || d.t === undefined) { st.textContent = '渲染中…'; return; }
-    const t = (d.t || '').slice(11, 19);
-    if (d.ok) {
-      st.innerHTML = '<b>OK</b> ' + t + ' · ' + (d.bytes || 0) + ' B · 编译 ' +
-        ((d.timings || {}).build || 0) + ' ms';
-      return;
-    }
-    const list = (d.errors || []).slice(0, 3);
-    if (!list.length) { st.innerHTML = '<span class="err">渲染失败</span>'; return; }
-    st.innerHTML = list.map(function (e) {
-      const j = jump(e.msg);
-      if (!j) return '<span class="err">' + esc(e.msg) + '</span>';
-      return '<a class="err" href="' + j.url + '">' + esc(j.label) + '</a>' +
-             '<br><span class="err">' + esc(j.rest) + '</span>';
-    }).join('<br>');
-  }
-  const es = new EventSource('/events');
-  es.onmessage = (e) => { let d = {}; try { d = JSON.parse(e.data); } catch {} bust(); status(d); };
-  es.onerror = () => { st.textContent = '连接断了，重连中…'; };
-  bust();
-</script>
-</html>`;
+}
 
-/**
- * 用 Chrome/Edge 的 app 模式开一个没地址栏的小窗 —— 钉在屏幕边上，不用切窗口。
- * 找不到浏览器就退回默认浏览器开标签页。
- */
-function openPreviewWindow(url, width, height) {
-  const cands = [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-    (process.env.LOCALAPPDATA || '') + '\\Microsoft\\Edge\\Application\\msedge.exe',
-  ];
-  const exe = cands.find((p) => existsSync(p));
-  if (exe) {
-    spawn(exe, [
-      '--app=' + url,
-      '--window-size=' + width + ',' + height,
-      '--window-position=60,60',
-    ], { detached: true, stdio: 'ignore' }).unref();
-    return exe;
+function findToolchainFor(ctx) {
+  try {
+    return findToolchain({
+      root: ctx.root,
+      config: ctx.config,
+      idf: ctx.idf,
+      env: process.env,
+    });
+  } catch (e) {
+    return { ok: false, problems: [`toolchain discovery failed: ${e.message}`] };
   }
-  spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
+}
+
+function toolchainPaths(toolchain) {
+  return { vcvars: toolchain.vcvars, cmake: toolchain.cmake, ninja: toolchain.ninja };
+}
+
+function isPositiveInteger(value) {
+  return Number.isInteger(value) && value > 0;
+}
+
+function validationProblem(command, flags, positionals) {
+  if (!COMMANDS.has(command)) return `未知命令: ${command}`;
+  if (command === 'help') return null;
+
+  for (const key of Object.keys(flags)) {
+    if (!KNOWN_FLAGS.has(key)) return `未知选项: --${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
+  }
+  if (positionals.length > 0) {
+    return command === 'dsh install'
+      ? `dsh install 不接受额外参数: ${positionals.join(' ')}`
+      : `多余的参数: ${positionals.join(' ')}`;
+  }
+  if (typeof flags.project !== 'string' || flags.project.trim() === '') {
+    return '--project 需要一个目录路径';
+  }
+  if (flags.out !== undefined && (typeof flags.out !== 'string' || flags.out.trim() === '')) {
+    return '--out 需要一个输出目录';
+  }
+  if (flags.width !== undefined
+    && (!Number.isInteger(flags.width) || flags.width < DISPLAY_MIN || flags.width > DISPLAY_MAX)) {
+    return `--width 必须是 ${DISPLAY_MIN}..${DISPLAY_MAX} 的整数`;
+  }
+  if (flags.height !== undefined
+    && (!Number.isInteger(flags.height) || flags.height < DISPLAY_MIN || flags.height > DISPLAY_MAX)) {
+    return `--height 必须是 ${DISPLAY_MIN}..${DISPLAY_MAX} 的整数`;
+  }
+  if (flags.frames !== undefined
+    && (!isPositiveInteger(flags.frames) || flags.frames > FRAMES_MAX)) {
+    return `--frames 必须是 1..${FRAMES_MAX} 的整数`;
+  }
+  if (flags.port !== undefined
+    && (!isPositiveInteger(flags.port) || flags.port > PORT_MAX)) {
+    return `--port 必须是 1..${PORT_MAX} 的整数`;
+  }
   return null;
 }
 
-/** serve：本地网页，保存即刷新。可以钉在第二块屏，也可以塞进 VS Code 的 Simple Browser */
-function serveLoop(flags) {
-  const clients = new Set();
-  let last = null;
+async function runRender(flags) {
+  const ctx = loadFor('render', flags);
+  if (!ctx.ok) return reportContextFailure(ctx, flags.json);
 
-  const w = makeWatcher(flags, (json) => {
-    last = json;
-    if (!json.ok) console.log('[lvglui] 渲染失败：' + ((json.errors && json.errors[0] && json.errors[0].msg) || '?'));
-    const data = 'data: ' + JSON.stringify({
-      t: json.t, ok: json.ok, bytes: json.bytes || 0, timings: json.timings || null,
-      errors: json.errors || [],
-    }) + '\n\n';
-    for (const res of clients) { try { res.write(data); } catch { /* ignore */ } }
+  const result = renderProject(ctx, {
+    frames: flags.frames,
+    rebuild: flags.noBuild !== true,
+    outDir: flags.out,
   });
+  const value = renderResult(result);
 
-  console.log('[lvglui] 界面: ' + w.ctx.uiDir);
-  console.log('[lvglui] 入口: ' + w.ctx.entry + '  配置来源: ' + (w.ctx.sdkconfig ? 'sdkconfig' : '内置默认'));
+  if (flags.json) {
+    writeJson(value);
+    if (!result.ok) reportRenderFailure(result);
+  } else if (result.ok) {
+    console.log(`[lvglui] png=${result.pngPath} meta=${result.metaPath} tree=${result.treePath}`);
+  } else {
+    reportRenderFailure(result);
+  }
 
-  const server = http.createServer((req, res) => {
-    const url = (req.url || '/').split('?')[0];
-    if (url === '/') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(PAGE);
-      return;
-    }
-    if (url === '/shot.png') {
-      try {
-        const buf = readFileSync(w.out);
-        res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' });
-        res.end(buf);
-      } catch {
-        res.writeHead(404, { 'content-type': 'text/plain' });
-        res.end('还没渲染出来');
-      }
-      return;
-    }
-    if (url === '/state') {
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
-      res.end(JSON.stringify(last || {}));
-      return;
-    }
-    if (url === '/events') {
-      res.writeHead(200, {
-        'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive',
-      });
-      res.write('retry: 1000\n\n');
-      clients.add(res);
-      req.on('close', () => clients.delete(res));
-      return;
-    }
-    res.writeHead(404, { 'content-type': 'text/plain' });
-    res.end('not found');
-  });
+  return result.ok ? 0 : exitForRender(result);
+}
 
-  const base = Number(flags.port) || 8765;
-  let port = base;
-  const listen = () => {
-    server.once('error', (e) => {
-      if (e.code === 'EADDRINUSE' && port - base < 10) {
-        port += 1;
-        listen();
-        return;
-      }
-      console.error('[lvglui] 起不了服务：' + e.message);
-      process.exit(1);
-    });
-    server.listen(port, '127.0.0.1', () => {
-      const url = 'http://127.0.0.1:' + port;
-      console.log('[lvglui] 预览: ' + url + '   (Ctrl+C 退出)');
-      if (flags.open) {
-        const w = Number(flags.width) || 300;
-        const h = Number(flags.height) || 460;
-        const exe = openPreviewWindow(url, w, h);
-        console.log('[lvglui] 已开小窗 ' + w + 'x' + h + (exe ? ' · ' + exe.split('\\').pop() : ' · 默认浏览器'));
-      }
-    });
+async function runBuild(flags) {
+  const ctx = loadFor('build', flags);
+  if (!ctx.ok) return reportContextFailure(ctx, flags.json);
+
+  const found = findToolchainFor(ctx);
+  if (!found.ok) {
+    const problems = found.problems ?? ['toolchain not found'];
+    for (const problem of problems) console.error(`[lvglui] ${problem}`);
+    if (flags.json) writeJson({ ok: false, stage: 'toolchain', problems });
+    return 2;
+  }
+
+  const buildCtx = { ...ctx, toolchain: toolchainPaths(found) };
+  try {
+    writeBuildScript(buildCtx);
+  } catch (e) {
+    console.error(`[lvglui] cannot write build script: ${e.message}`);
+    if (flags.json) writeJson({ ok: false, stage: 'ctx', problems: [e.message] });
+    return 2;
+  }
+
+  const build = buildHost(buildCtx);
+  let diagnostics = null;
+  if (!build.ok) {
+    let log = build.stderr;
+    try {
+      if (build.logPath) log = fs.readFileSync(build.logPath, 'utf8');
+    } catch {
+      // keep captured stderr
+    }
+    diagnostics = parseDiagnostics(log ?? '', { root: ctx.root, toolDir: ctx.toolDir });
+  }
+
+  const value = {
+    ok: build.ok,
+    exitCode: build.exitCode,
+    durationMs: build.durationMs,
+    logPath: build.logPath,
+    ...(diagnostics ? { diagnostics } : {}),
   };
-  listen();
 
+  if (flags.json) {
+    writeJson(value);
+    if (!build.ok) printDiagnostics(diagnostics);
+  } else if (build.ok) {
+    console.log(`[lvglui] build ok exit=0 log=${build.logPath} (${build.durationMs} ms)`);
+  } else {
+    console.error(`[lvglui] build failed exit=${build.exitCode ?? '?'} log=${build.logPath ?? '(none)'}`);
+    printDiagnostics(diagnostics);
+  }
+
+  return build.ok ? 0 : 1;
+}
+
+async function runDoctor(flags) {
+  const ctx = loadFor('doctor', flags);
+  const toolchain = findToolchainFor(ctx);
+  const result = doctor(ctx, { toolchain });
+
+  if (flags.json) {
+    writeJson(result);
+    for (const check of result.problems ?? []) {
+      if (typeof check === 'string') {
+        console.error(`[lvglui] ${check}`);
+        continue;
+      }
+      console.error(`[lvglui] [${check.status ?? 'fail'}] ${check.id ?? '?'}: ${check.message ?? ''}`);
+      const detail = check.detail === undefined ? [] : (Array.isArray(check.detail) ? check.detail : [check.detail]);
+      for (const line of detail) console.error(`       ${line}`);
+    }
+  } else {
+    for (const warning of ctx.warnings ?? []) console.error(`[lvglui] warning: ${warning}`);
+    printChecks(result.checks);
+    if (!result.ok) console.error('[lvglui] doctor 发现问题，见上面的 fail 项');
+  }
+
+  return result.ok ? 0 : 1;
+}
+
+async function runInit(flags) {
+  const ctx = loadFor('init', flags);
+  const result = initProject(ctx, {
+    width: flags.width,
+    height: flags.height,
+    force: flags.force === true,
+  });
+
+  if (!result.ok) {
+    for (const problem of result.problems) console.error(`[lvglui] ${problem}`);
+    return 2;
+  }
+
+  console.log(`[lvglui] init 创建了 ${result.created.length} 个文件（${ctx.root}）：`);
+  for (const created of result.created) console.log(`  + ${created}`);
+  console.log('');
+  console.log(result.snippet);
+  console.error('[lvglui] 把上面的代码放到 LVGL 显示/触摸初始化完成之后');
+
+  if (flags.noRender) return 0;
+
+  // init 刚写完 lvglui.json / UI 源码；必须用 requireUi:true 重新探测，
+  // 旧 ctx 里没有新 UI。
+  const next = loadContext({
+    startDir: process.cwd(),
+    projectDir: flags.project,
+    cliWidth: flags.width,
+    cliHeight: flags.height,
+    requireUi: true,
+  });
+  if (!next.ok) {
+    for (const problem of next.problems) console.error(`[lvglui] ${problem}`);
+    return 0;
+  }
+
+  const toolchain = findToolchainFor(next);
+  const check = doctor(next, { toolchain });
+  printChecks(check.checks);
+
+  const rendered = renderProject(next, { frames: flags.frames, outDir: flags.out });
+  if (rendered.ok) {
+    console.log(`[lvglui] png=${rendered.pngPath} meta=${rendered.metaPath} tree=${rendered.treePath}`);
+  } else {
+    reportRenderFailure(rendered);
+  }
+
+  return 0;
+}
+
+async function runPreview(flags) {
+  const ctx = loadFor('preview', flags);
+  if (!ctx.ok) return reportContextFailure(ctx, false);
+
+  const result = previewProject(ctx);
+  if (!result.ok) {
+    console.error(`[lvglui] preview failed (${result.error?.stage ?? 'unknown'}): ${result.error?.message ?? 'unknown error'}`);
+    switch (result.error?.stage) {
+      case 'ctx':
+      case 'toolchain':
+        return 2;
+      case 'build':
+        return 1;
+      default:
+        return 3;
+    }
+  }
+
+  console.log(`[lvglui] preview pid=${result.pid} args=${(result.args ?? []).join(' ')}`);
+  // previewProject 的窗口是 detached:false 的子进程；不主动退出的话 CLI 会一直
+  // 挂在这个 child handle 上。先 flush stdout，再退出，窗口本身继续运行。
+  process.stdout.write('', () => process.exit(0));
+  return 0;
+}
+
+function runWatch(flags) {
+  const ctx = loadFor('watch', flags);
+  if (!ctx.ok) return reportContextFailure(ctx, false);
+
+  console.error(`[lvglui] watching ${ctx.uiDir}`);
+  writeJson({
+    event: 'watching',
+    project: ctx.root,
+    uiDir: ctx.uiDir,
+    width: ctx.display?.width ?? null,
+    height: ctx.display?.height ?? null,
+  });
+
+  let busy = false;
+  let queued = false;
+  let timer = null;
+
+  const renderNow = () => {
+    timer = null;
+    if (busy) {
+      queued = true;
+      return;
+    }
+    busy = true;
+    const result = renderProject(ctx, {
+      frames: flags.frames,
+      rebuild: true,
+      outDir: flags.out,
+    });
+    writeJson(renderResult(result));
+    if (!result.ok) reportRenderFailure(result);
+    busy = false;
+    if (queued) {
+      queued = false;
+      renderNow();
+    }
+  };
+
+  let watcher;
+  try {
+    watcher = fs.watch(ctx.uiDir, { recursive: true }, (_event, filename) => {
+      if (filename && !/\.(c|h)$/i.test(String(filename))) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(renderNow, 300);
+    });
+  } catch (e) {
+    console.error(`[lvglui] cannot watch ${ctx.uiDir}: ${e.message}`);
+    return 3;
+  }
+
+  renderNow();
   const stop = () => {
-    w.stop();
-    for (const res of clients) { try { res.end(); } catch { /* ignore */ } }
-    server.close(() => process.exit(0));
+    try {
+      watcher.close();
+    } catch {
+      // already closed
+    }
+    process.exit(0);
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
+  return 0;
 }
 
-const { flags, rest } = parseArgs(process.argv.slice(2));
-const cmd = rest[0] || 'render';
+const PAGE = `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>lvglui preview</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #12151c; color: #e6e9f0;
+    font: 13px/1.4 ui-monospace, Consolas, monospace; }
+  main { display: flex; flex-direction: column; align-items: center; gap: 12px;
+    padding: 16px; box-sizing: border-box; min-height: 100%; }
+  img { max-width: 100%; height: auto; image-rendering: pixelated;
+    box-shadow: 0 0 0 1px #2a2f3a; background: #000; }
+  pre { margin: 0; color: #9aa4b2; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<main>
+  <img id="shot" src="/shot.png" alt="LVGL 渲染结果">
+  <pre id="status">waiting for first render…</pre>
+</main>
+<script>
+const img = document.getElementById('shot');
+const status = document.getElementById('status');
+const events = new EventSource('/events');
+events.onmessage = (event) => {
+  let data;
+  try { data = JSON.parse(event.data); } catch { return; }
+  if (data.ok && data.bust) {
+    img.src = '/shot.png?t=' + data.bust;
+    const t = data.timings || {};
+    status.textContent = 'ok  ' + new Date(data.t).toLocaleTimeString()
+      + '  frames=' + (data.frames ?? '?')
+      + '  shot=' + (t.shotMs ?? '?') + 'ms  encode=' + (t.encodeMs ?? '?') + 'ms';
+  } else {
+    status.textContent = 'render failed: ' + (data.error && data.error.message || 'unknown error');
+  }
+};
+events.onerror = () => { status.textContent = 'event stream disconnected; retrying…'; };
+</script>
+</body>
+</html>`;
 
-switch (cmd) {
-  case 'render': {
-    const ctx = ctxOrFail(flags);
-    const r = render(ctx, {
-      out: flags.out,
-      frames: flags.frames ? Number(flags.frames) : 12,
-      rebuild: !flags.noBuild,
+async function runServe(flags) {
+  const ctx = loadFor('serve', flags);
+  if (!ctx.ok) return reportContextFailure(ctx, false);
+
+  const clients = new Set();
+  const shotDir = flags.out !== undefined ? path.resolve(flags.out) : ctx.outDir;
+  let last = null;
+  let busy = false;
+  let queued = false;
+
+  const broadcast = (result) => {
+    const payload = {
+      t: Date.now(),
+      ok: result.ok === true,
+      bust: Date.now(),
+      frames: result.meta?.frames ?? null,
+      timings: result.meta
+        ? {
+            buildMs: result.meta.buildMs,
+            shotMs: result.meta.shotMs,
+            encodeMs: result.meta.encodeMs,
+          }
+        : null,
+      error: result.error ?? null,
+      diagnostics: result.diagnostics
+        ? {
+            summary: result.diagnostics.summary,
+            errors: result.diagnostics.errors.slice(0, 5),
+            hints: result.diagnostics.hints,
+          }
+        : null,
+    };
+    last = payload;
+    const data = `data: ${JSON.stringify(payload)}\n\n`;
+    for (const client of clients) {
+      try {
+        client.write(data);
+      } catch {
+        clients.delete(client);
+      }
+    }
+  };
+
+  // Never call renderProject() from an HTTP callback: it uses spawnSync and
+  // would freeze the event loop. One child CLI render at a time instead.
+  const queueRender = () => {
+    if (busy) {
+      queued = true;
+      return;
+    }
+    busy = true;
+
+    const args = [fileURLToPath(import.meta.url), 'render', '--project', ctx.root, '--json'];
+    if (flags.width !== undefined) args.push('--width', String(flags.width));
+    if (flags.height !== undefined) args.push('--height', String(flags.height));
+    if (flags.frames !== undefined) args.push('--frames', String(flags.frames));
+    if (flags.out !== undefined) args.push('--out', flags.out);
+    if (flags.noBuild === true) args.push('--no-build');
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const child = spawn(process.execPath, args, {
+      // Keep the child's cwd equal to this process so a relative --out
+      // resolves to the same directory that /shot.png serves.
+      cwd: process.cwd(),
+      windowsHide: true,
+      env: process.env,
     });
-    if (!r.ok) fail(r);
-    if (flags.quiet) console.log(r.png);
-    else console.log(JSON.stringify(r, null, flags.json ? 2 : 0));
-    break;
-  }
-  case 'build': {
-    const ctx = ctxOrFail(flags);
-    const b = build(ctx, { quiet: false });
-    if (!b.ok) fail({ ok: false, ms: b.ms, errors: b.errors });
-    console.log(JSON.stringify({ ok: true, ms: b.ms, config: b.config, buildDir: ctx.buildDir }));
-    break;
-  }
-  case 'watch': {
-    watchLoop(flags);
-    break;
-  }
-  case 'serve': {
-    serveLoop(flags);
-    break;
-  }
-  case 'preview': {
-    const ctx = ctxOrFail(flags);
-    const p = preview(ctx);
-    if (!p.ok) fail(p);
-    console.log(JSON.stringify(p));
-    break;
-  }
-  case 'init': {
-    const r = init(flags);
-    if (!r.ok) fail(r);
-    console.log(JSON.stringify(r, null, 2));
-    break;
-  }
-  case 'doctor': {
-    const ctx = context(flags.project);
-    const d = doctor(ctx);
-    console.log(JSON.stringify(d, null, 2));
-    process.exit(d.ok ? 0 : 1);
-    break;
-  }
-  default: {
-    console.error(`未知命令: ${cmd}`);
-    console.error('  render | build | preview | init | doctor   加 --project <dir> 指定工程');
-    process.exit(2);
-  }
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      broadcast(result);
+      busy = false;
+      if (queued) {
+        queued = false;
+        queueRender();
+      }
+    };
+
+    child.stdout.on('data', (chunk) => {
+      if (stdout.length < 8 * 1024 * 1024) stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+      process.stderr.write(chunk);
+    });
+    child.on('error', (e) => {
+      finish({ ok: false, error: { stage: 'spawn', message: e.message } });
+    });
+    child.on('close', (code) => {
+      let result;
+      try {
+        result = JSON.parse(stdout.trim());
+      } catch {
+        result = {
+          ok: false,
+          error: {
+            stage: 'json',
+            message: `render child exited ${code} without JSON${stderr ? `: ${stderr.trim().split('\n').pop()}` : ''}`,
+          },
+        };
+      }
+      finish(result);
+    });
+  };
+
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('method not allowed');
+      return;
+    }
+
+    if (url.pathname === '/') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(req.method === 'HEAD' ? undefined : PAGE);
+      return;
+    }
+
+    if (url.pathname === '/shot.png') {
+      let stream;
+      try {
+        stream = fs.createReadStream(path.join(shotDir, 'shot.png'));
+      } catch (e) {
+        res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end(`cannot read shot.png: ${e.message}`);
+        return;
+      }
+      stream.once('error', () => {
+        if (!res.headersSent) res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end('shot.png not ready');
+      });
+      stream.once('open', () => {
+        res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' });
+        if (req.method === 'HEAD') {
+          stream.destroy();
+          res.end();
+          return;
+        }
+        stream.pipe(res);
+      });
+      return;
+    }
+
+    if (url.pathname === '/events') {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-store',
+        connection: 'keep-alive',
+      });
+      res.write('retry: 1000\n\n');
+      clients.add(res);
+      if (last) res.write(`data: ${JSON.stringify(last)}\n\n`);
+      req.on('close', () => clients.delete(res));
+      return;
+    }
+
+    if (url.pathname === '/state') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(last ?? { ok: null, pending: true }));
+      return;
+    }
+
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('not found');
+  });
+
+  const basePort = flags.port ?? 8765;
+
+  const listen = (port, remaining) => {
+    const onError = (e) => {
+      server.removeListener('listening', onListening);
+      if (e.code === 'EADDRINUSE' && remaining > 0) {
+        console.error(`[lvglui] port ${port} busy, trying ${port + 1}`);
+        listen(port + 1, remaining - 1);
+        return;
+      }
+      console.error(`[lvglui] cannot listen on 127.0.0.1:${port}: ${e.message}`);
+      process.exitCode = 3;
+    };
+    const onListening = () => {
+      server.removeListener('error', onError);
+      const address = server.address();
+      const actual = typeof address === 'object' && address ? address.port : port;
+      console.error(`[lvglui] serve http://127.0.0.1:${actual}`);
+      console.error(`[lvglui] project=${ctx.root} out=${shotDir}`);
+      queueRender();
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, '127.0.0.1');
+  };
+
+  listen(basePort, 9);
+
+  const stop = () => {
+    try {
+      server.close();
+    } catch {
+      // already closed
+    }
+    process.exit(0);
+  };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+  return 0;
 }
+
+function toPosix(value) {
+  return String(value).split(path.sep).join('/');
+}
+
+async function runDshInstall(flags) {
+  const modulePath = path.join(TOOL_DIR, 'core', 'dsh.mjs');
+  if (!fs.existsSync(modulePath)) {
+    console.error('[lvglui] dsh installer not available: core/dsh.mjs 不存在（Task 16 尚未实现）');
+    if (flags.json) writeJson({ ok: false, problems: ['core/dsh.mjs not available'] });
+    return 2;
+  }
+
+  const { installDsh } = await import('../core/dsh.mjs');
+  const result = installDsh(TOOL_DIR);
+  const target = `file:${toPosix(path.join(TOOL_DIR, 'dsh'))}`;
+
+  if (!result?.ok) {
+    const problems = result?.problems ?? ['dsh install failed'];
+    for (const problem of problems) console.error(`[lvglui] ${problem}`);
+    if (flags.json) writeJson({ ok: false, problems, target });
+    return 2;
+  }
+
+  if (flags.json) {
+    writeJson({
+      ok: true,
+      patchFile: result.patchFile ?? null,
+      target,
+      note: '移动工具目录后需要重新运行 dsh install',
+    });
+    return 0;
+  }
+
+  console.log(`[lvglui] dsh 插件已生成: ${result.patchFile ?? path.join(TOOL_DIR, 'dsh')}`);
+  console.log(`[lvglui] 安装: plugin_manager install_bundle target="${target}"`);
+  console.log('[lvglui] 注意: 移动工具目录后需要重新运行 dsh install');
+  return 0;
+}
+
+/**
+ * Run one CLI command. Async because `dsh install` and watch/serve setup use
+ * promises; the long-running commands return immediately and keep the event
+ * loop alive via their watcher/server handles.
+ *
+ * @param {string[]} [argv]
+ * @returns {Promise<number>} exit code (also assigned to process.exitCode)
+ */
+export async function main(argv = process.argv.slice(2)) {
+  const { command, flags, positionals } = parseArgs(argv);
+
+  if (command === 'help') {
+    console.log(USAGE);
+    process.exitCode = 0;
+    return 0;
+  }
+
+  const problem = validationProblem(command, flags, positionals);
+  if (problem) {
+    console.error(`[lvglui] ${problem}`);
+    console.error(USAGE);
+    process.exitCode = 2;
+    return 2;
+  }
+
+  let code;
+  try {
+    switch (command) {
+      case 'render':
+        code = await runRender(flags);
+        break;
+      case 'build':
+        code = await runBuild(flags);
+        break;
+      case 'doctor':
+        code = await runDoctor(flags);
+        break;
+      case 'init':
+        code = await runInit(flags);
+        break;
+      case 'preview':
+        code = await runPreview(flags);
+        break;
+      case 'watch':
+        code = runWatch(flags);
+        break;
+      case 'serve':
+        code = await runServe(flags);
+        break;
+      case 'dsh install':
+        code = await runDshInstall(flags);
+        break;
+      default:
+        code = 2;
+    }
+  } catch (e) {
+    console.error(`[lvglui] unexpected error: ${e.stack ?? e.message}`);
+    code = 3;
+  }
+
+  process.exitCode = code;
+  return code;
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
