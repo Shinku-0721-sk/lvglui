@@ -2,150 +2,311 @@
 // lvglui-mcp: MCP (stdio, newline-delimited JSON-RPC 2.0) server exposing the
 // headless LVGL renderer so an agent can "look at" the screen it just wrote.
 //
-// Tools: render_ui (returns a PNG image content block), build_ui, preview_ui, doctor.
+// The server is intentionally thin: every command maps to one core seam from
+// core/context.mjs, core/render.mjs, core/build.mjs, core/doctor.mjs or
+// core/preview.mjs. It writes only JSON-RPC to stdout; diagnostics live in the
+// tool result or in the build log on disk.
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import readline from 'node:readline';
-import { build, context, doctor, preview, render } from './core.mjs';
+import { buildHost, writeBuildScript } from '../core/build.mjs';
+import { loadContext } from '../core/context.mjs';
+import { doctor as runDoctor } from '../core/doctor.mjs';
+import { initProject } from '../core/init.mjs';
+import { previewProject } from '../core/preview.mjs';
+import { renderProject } from '../core/render.mjs';
+import { findToolchain } from '../core/toolchain.mjs';
 
-const PROTOCOL = '2024-11-05';
+const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
+const FALLBACK_PROTOCOL = PROTOCOL_VERSIONS[0];
+const SERVER_INFO = { name: 'lvglui', version: '0.1.0' };
 
 const PROJECT_ARG = {
   type: 'string',
-  description: 'ESP-IDF 工程目录（默认当前工作目录，会自动往上找带 project() 的 CMakeLists.txt）',
+  description: 'ESP-IDF 工程目录（默认 LVGLUI_PROJECT 或当前工作目录）',
 };
+
+const WIDTH_ARG = { type: 'number', description: '屏幕宽；缺省用 lvglui.json/sdkconfig' };
+const HEIGHT_ARG = { type: 'number', description: '屏幕高；缺省用 lvglui.json/sdkconfig' };
 
 const TOOLS = [
   {
-    name: 'render_ui',
+    name: 'detect_project',
     description:
-      '把工程的界面（components/app_ui/*.c）用主机上的 LVGL 无头渲染成 PNG 并返回图片，' +
-      '分辨率/颜色格式/字体配置都跟着固件的 sdkconfig 走。看布局、看配色、看文字有没有溢出。' +
-      '改完 .c 再调一次，看图再改，直到满意。同一份源码永远渲染出同样的像素。',
+      '探测 ESP-IDF 工程：找工程根、UI 目录、入口函数、IDF/LVGL、分辨率和色深。' +
+      '只读；不会写文件。用于在写界面前确认工具看到了正确的工程。',
+    inputSchema: {
+      type: 'object',
+      properties: { project: PROJECT_ARG, width: WIDTH_ARG, height: HEIGHT_ARG },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'init_ui',
+    description:
+      '在已有 ESP-IDF 工程里注入 UI 组件骨架（components/app_ui 与 lvglui.json），' +
+      '不改任何现有文件，并返回需要粘到 main 的接入片段。已有 lvglui.json 时拒绝。',
     inputSchema: {
       type: 'object',
       properties: {
         project: PROJECT_ARG,
-        out: { type: 'string', description: '输出 PNG 路径（默认 tools/ui-preview/out/preview.png）' },
-        frames: { type: 'number', description: '截图前先跑几帧（默认 12 × 33ms）' },
-        rebuild: { type: 'boolean', description: '渲染前先编译（默认 true）' },
+        width: WIDTH_ARG,
+        height: HEIGHT_ARG,
+        force: { type: 'boolean', description: 'v1 保留参数，当前不覆盖已有文件' },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'render_ui',
+    description:
+      '编译并渲染界面为 PNG 图片，同时返回控件树和元数据。改完 .c 再调一次，' +
+      '看图再改。同一份源码、同一配置下像素确定。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project: PROJECT_ARG,
+        width: WIDTH_ARG,
+        height: HEIGHT_ARG,
+        frames: { type: 'number', description: '截图前跑几帧（默认 12 × 33ms）' },
+        rebuild: { type: 'boolean', description: '渲染前先编译（默认 true）' },
+        outDir: { type: 'string', description: '输出目录（默认工程的 .lvglui/out）' },
+      },
+      additionalProperties: false,
     },
   },
   {
     name: 'build_ui',
-    description: '只编译不渲染（ui.dll / preview.exe / shot.exe），有编译错误就返回错误。',
-    inputSchema: { type: 'object', properties: { project: PROJECT_ARG } },
-  },
-  {
-    name: 'preview_ui',
-    description: '在桌面上打开实时预览窗口，保存界面源码就会自动重载。',
-    inputSchema: { type: 'object', properties: { project: PROJECT_ARG } },
+    description: '只编译不渲染（ui.dll / preview.exe / shot.exe），返回退出码和 build.log 路径。',
+    inputSchema: {
+      type: 'object',
+      properties: { project: PROJECT_ARG, width: WIDTH_ARG, height: HEIGHT_ARG },
+      additionalProperties: false,
+    },
   },
   {
     name: 'doctor',
-    description: '自检：编译器在不在、LVGL 源码在哪、界面目录和入口函数探测到了什么。',
-    inputSchema: { type: 'object', properties: { project: PROJECT_ARG } },
+    description: '自检：IDF/LVGL、分辨率、UI 目录/入口、SRCS、平台头文件、工具链和字体。',
+    inputSchema: {
+      type: 'object',
+      properties: { project: PROJECT_ARG, width: WIDTH_ARG, height: HEIGHT_ARG },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'preview_ui',
+    description: '在桌面上打开实时预览窗口；保存界面源码会自动重建并重载。',
+    inputSchema: {
+      type: 'object',
+      properties: { project: PROJECT_ARG, width: WIDTH_ARG, height: HEIGHT_ARG },
+      additionalProperties: false,
+    },
   },
 ];
 
 function text(t) {
-  return { type: 'text', text: t };
+  return { type: 'text', text: String(t) };
 }
 
-function callTool(name, args = {}) {
-  const ctx = context(args.project);
-  if (!ctx.ok) {
-    return {
-      isError: true,
-      content: [text(`探测工程失败（${ctx.root}）：\n${ctx.problems.join('\n')}\n\n` +
-        '如果这是一个还没有界面的新工程，先跑 `lvglui init`。')],
-    };
+function jsonText(value) {
+  return text(JSON.stringify(value));
+}
+
+function toolResult(value, isError = false) {
+  return { content: [jsonText(value)], isError };
+}
+
+function errorResult(message, extra = {}) {
+  return toolResult({ ok: false, message, ...extra }, true);
+}
+
+function projectArg(args) {
+  const raw = args?.project ?? process.env.LVGLUI_PROJECT ?? process.cwd();
+  return path.resolve(raw);
+}
+
+function load(project, requireUi, args = {}) {
+  return loadContext({
+    projectDir: project,
+    cliWidth: args.width,
+    cliHeight: args.height,
+    requireUi,
+  });
+}
+
+function pickContext(ctx) {
+  return {
+    ok: ctx.ok,
+    root: ctx.root,
+    uiDir: ctx.uiDir,
+    entry: ctx.entry,
+    entryHow: ctx.entryHow,
+    idf: ctx.idf,
+    lvgl: ctx.lvgl,
+    display: ctx.display,
+    problems: ctx.problems,
+    warnings: ctx.warnings,
+  };
+}
+
+function resolveToolchain(ctx) {
+  const found = findToolchain({ root: ctx.root, config: ctx.config, idf: ctx.idf, env: process.env });
+  if (!found.ok) return { ok: false, problems: found.problems };
+  return {
+    ok: true,
+    toolchain: { vcvars: found.vcvars, cmake: found.cmake, ninja: found.ninja },
+    source: found.source,
+  };
+}
+
+async function callTool(name, args = {}) {
+  const project = projectArg(args);
+
+  if (name === 'detect_project') {
+    const ctx = load(project, false, args);
+    // Discovery is informational: a missing display pair is a finding, not a
+    // transport-level tool error.
+    return toolResult(pickContext(ctx), false);
+  }
+
+  if (name === 'init_ui') {
+    const ctx = loadContext({
+      projectDir: project,
+      cliWidth: args.width,
+      cliHeight: args.height,
+      requireUi: false,
+    });
+    if (!ctx.ok) return errorResult('工程探测失败，未写入任何文件', { problems: ctx.problems });
+    const r = initProject(ctx, { width: args.width, height: args.height, force: args.force === true });
+    return toolResult(r, !r.ok);
   }
 
   if (name === 'render_ui') {
-    const r = render(ctx, { out: args.out, frames: args.frames || 12, rebuild: args.rebuild !== false });
+    const ctx = load(project, true, args);
+    if (!ctx.ok) return errorResult('工程探测失败', { problems: ctx.problems });
+    const r = renderProject(ctx, {
+      frames: args.frames,
+      rebuild: args.rebuild !== false,
+      outDir: args.outDir,
+    });
     if (!r.ok) {
-      return {
-        isError: true,
-        content: [text(`render 在 "${r.stage}" 阶段失败:\n${JSON.stringify(r.errors, null, 2)}`)],
-      };
+      return toolResult(
+        {
+          ok: false,
+          stage: r.stage,
+          message: r.message,
+          diagnostics: r.diagnostics,
+          buildLog: r.error?.buildLog ?? r.buildLog ?? null,
+          problems: ctx.problems,
+        },
+        true,
+      );
     }
-    const meta = {
-      png: r.png,
-      width: r.width,
-      height: r.height,
-      bytes: r.bytes,
-      entry: r.entry,
-      uiDir: r.uiDir,
-      config: r.config,
-      names: r.names,
-      ms: r.timings,
-    };
+    const image = readFileSync(r.pngPath).toString('base64');
     return {
       content: [
-        { type: 'image', data: readFileSync(r.png).toString('base64'), mimeType: 'image/png' },
-        text(JSON.stringify(meta)),
+        { type: 'image', data: image, mimeType: 'image/png' },
+        jsonText({
+          ok: true,
+          width: r.meta?.display?.width ?? ctx.display?.width,
+          height: r.meta?.display?.height ?? ctx.display?.height,
+          entry: ctx.entry,
+          uiDir: ctx.uiDir,
+          pngPath: r.pngPath,
+          treePath: r.treePath,
+          metaPath: r.metaPath,
+          names: r.names,
+          meta: r.meta,
+          tree: r.tree,
+          diagnostics: r.diagnostics,
+        }),
       ],
+      isError: false,
     };
   }
 
   if (name === 'build_ui') {
-    const b = build(ctx, { quiet: true });
-    return {
-      isError: !b.ok,
-      content: [text(JSON.stringify({ ok: b.ok, ms: b.ms, config: b.config, errors: b.errors }, null, 2))],
-    };
-  }
-
-  if (name === 'preview_ui') {
-    const p = preview(ctx);
-    return { isError: !p.ok, content: [text(JSON.stringify(p))] };
+    const ctx = load(project, true, args);
+    if (!ctx.ok) return errorResult('工程探测失败', { problems: ctx.problems });
+    const tc = resolveToolchain(ctx);
+    if (!tc.ok) return errorResult('工具链发现失败', { problems: tc.problems });
+    const buildCtx = { ...ctx, toolchain: tc.toolchain };
+    let script;
+    try {
+      ({ script } = writeBuildScript(buildCtx));
+    } catch (e) {
+      return errorResult(`无法生成构建脚本: ${e.message}`);
+    }
+    const r = buildHost(buildCtx, { quiet: true });
+    return toolResult({ ok: r.ok, exitCode: r.exitCode, durationMs: r.durationMs, logPath: r.logPath, script }, !r.ok);
   }
 
   if (name === 'doctor') {
-    const d = doctor(ctx);
-    return { isError: !d.ok, content: [text(JSON.stringify(d, null, 2))] };
+    const ctx = load(project, true, args);
+    if (!ctx.ok) return errorResult('工程探测失败', { problems: ctx.problems });
+    const tc = resolveToolchain(ctx);
+    const d = runDoctor(ctx, { toolchain: tc.ok ? tc.toolchain : undefined });
+    return toolResult(d, !d.ok);
   }
 
-  return { isError: true, content: [text(`unknown tool: ${name}`)] };
+  if (name === 'preview_ui') {
+    const ctx = load(project, true, args);
+    if (!ctx.ok) return errorResult('工程探测失败', { problems: ctx.problems });
+    const p = previewProject(ctx);
+    return toolResult(p, !p.ok);
+  }
+
+  return errorResult(`unknown tool: ${name}`);
 }
 
-function handle(msg) {
-  const { id, method, params } = msg;
-  const reply = (result) => ({ jsonrpc: '2.0', id, result });
-  const error = (code, message) => ({ jsonrpc: '2.0', id, error: { code, message } });
+function reply(id, result) {
+  return { jsonrpc: '2.0', id, result };
+}
+
+function rpcError(id, code, message) {
+  return { jsonrpc: '2.0', id, error: { code, message } };
+}
+
+async function handle(msg) {
+  const { id, method, params } = msg ?? {};
+  const isNotification = id === undefined;
 
   switch (method) {
-    case 'initialize':
-      return reply({
-        protocolVersion: PROTOCOL,
+    case 'initialize': {
+      const requested = params?.protocolVersion;
+      const protocolVersion = PROTOCOL_VERSIONS.includes(requested) ? requested : FALLBACK_PROTOCOL;
+      return reply(id, {
+        protocolVersion,
         capabilities: { tools: {} },
-        serverInfo: { name: 'lvglui', version: '0.1.0' },
+        serverInfo: SERVER_INFO,
         instructions:
-          '界面是 C，写在工程的 components/app_ui/ 里（只能 include lvgl.h）。' +
-          '画布尺寸、颜色格式、字体都跟着工程的 sdkconfig 走。' +
-          '布局常量放文件顶部 #define；每个业务要用的控件用 lv_obj_set_name() 起名（这是契约）。' +
-          '改完调 render_ui 看图，不对再改。',
+          '工具名是 lvglui。界面是 C，写在 uiDir（默认 components/app_ui）里，只能 include LVGL 和 UI 自己的头；' +
+          '业务数据只能通过 ui_port.h 取。画布尺寸/色深/LVGL 由工程配置决定。' +
+          '改完调 render_ui 看图，再看 tree 查控件名和文字。',
       });
+    }
     case 'notifications/initialized':
     case 'notifications/cancelled':
       return null;
     case 'ping':
-      return reply({});
+      return reply(id, {});
     case 'tools/list':
-      return reply({ tools: TOOLS });
+      return reply(id, { tools: TOOLS });
     case 'tools/call': {
-      const name = params?.name;
-      const args = params?.arguments || {};
+      if (!params || typeof params.name !== 'string') {
+        return isNotification ? null : rpcError(id, -32602, 'invalid params: tools/call requires a tool name');
+      }
+      const args = params.arguments ?? {};
       try {
-        const out = callTool(name, args);
-        return reply({ content: out.content, isError: !!out.isError });
+        const out = await callTool(params.name, args);
+        return reply(id, { content: out.content, isError: !!out.isError });
       } catch (e) {
-        return reply({ content: [text(`internal error: ${e.message}`)], isError: true });
+        const detail = e && e.stack ? e.message : String(e);
+        return reply(id, { content: [text(`internal error: ${detail}`)], isError: true });
       }
     }
     default:
-      return id === undefined ? null : error(-32601, `method not found: ${method}`);
+      return isNotification ? null : rpcError(id, -32601, `method not found: ${method}`);
   }
 }
 
@@ -154,21 +315,34 @@ const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity 
 rl.on('line', (line) => {
   const s = line.trim();
   if (!s) return;
+
   let msg;
   try {
     msg = JSON.parse(s);
   } catch {
-    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } }) + '\n');
+    process.stdout.write(`${JSON.stringify(rpcError(null, -32700, 'parse error'))}\n`);
     return;
   }
-  try {
-    const out = handle(msg);
-    if (out) process.stdout.write(JSON.stringify(out) + '\n');
-  } catch (e) {
-    if (msg.id !== undefined) {
-      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: String(e.message || e) } }) + '\n');
-    }
+
+  if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) {
+    process.stdout.write(`${JSON.stringify(rpcError(msg?.id ?? null, -32600, 'invalid request'))}\n`);
+    return;
   }
+
+  if (msg.jsonrpc !== '2.0') {
+    process.stdout.write(`${JSON.stringify(rpcError(msg.id ?? null, -32600, 'invalid request: jsonrpc must be 2.0'))}\n`);
+    return;
+  }
+
+  handle(msg)
+    .then((out) => {
+      if (out) process.stdout.write(`${JSON.stringify(out)}\n`);
+    })
+    .catch((e) => {
+      if (msg.id !== undefined) {
+        process.stdout.write(`${JSON.stringify(rpcError(msg.id, -32603, String(e?.message ?? e)))}\n`);
+      }
+    });
 });
 
 rl.on('close', () => process.exit(0));
