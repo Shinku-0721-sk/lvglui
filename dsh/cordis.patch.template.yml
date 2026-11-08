@@ -1,0 +1,13 @@
+- insert:
+    - id: lvglui-skill
+      name: dsh-lvglui
+    - id: lvglui-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: lvglui
+        transport: stdio
+        command: node
+        args:
+          - "__TOOL_DIR__/cli/lvglui-mcp.mjs"
+        cwd: "__TOOL_DIR__"
+        failOnStartupError: true

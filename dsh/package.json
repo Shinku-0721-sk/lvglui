@@ -1,0 +1,18 @@
+{
+  "name": "dsh-lvglui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "files": [
+    "lib/",
+    "skills/",
+    "cordis.patch.template.yml",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
