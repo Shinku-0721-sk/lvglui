@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "lvglui": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["D:\\LVGL_preview\\cli\\lvglui-mcp.mjs"]
+    }
+  }
+}
