@@ -267,7 +267,7 @@ Expected: FAIL，`Cannot find module ... core/config.mjs`。
 - [ ] **Step 3: 跑测试**
 
 Run: `node --test test/unit/config.test.mjs`
-Expected: PASS 4。
+Expected: PASS（至少 4；补 read/write/BOM/路径测试后更多）。
 
 - [ ] **Step 4: 提交**
 
