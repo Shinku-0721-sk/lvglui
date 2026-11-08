@@ -97,7 +97,7 @@ void  ui_port_set_relay(bool on);
 - `ui_template` 里的 `ui_port_stub.c` 在 PC 构建时提供桩；固件构建时是空 TU，用户在 `main/ui_port_impl.c` 提供强符号
 - 缺实现会在链接期报错，不会悄悄编过
 
-控件命名用 `ui_set_name(obj, "val_temp")`（内部包了 `LV_USE_OBJ_NAME`），渲染时 `tree.json` 和 PNG 一起给你。
+控件命名用 `lv_obj_set_name(obj, "val_temp")`（预览 `lv_conf.h` 强制开启 `LV_USE_OBJ_NAME`；固件侧也要开），渲染时 `tree.json` 和 PNG 一起给你。
 
 ## 命令
 
