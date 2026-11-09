@@ -16,6 +16,7 @@ import { doctor } from '../core/doctor.mjs';
 import { buildHost, writeBuildScript } from '../core/build.mjs';
 import { previewProject } from '../core/preview.mjs';
 import { initProject } from '../core/init.mjs';
+import { fontAdd, fontOff, fontStatus, FONT_PRESET, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../core/font.mjs';
 import { parseDiagnostics } from '../core/diagnostics.mjs';
 import { DISPLAY_MAX, DISPLAY_MIN } from '../core/config.mjs';
 
@@ -30,11 +31,14 @@ const COMMANDS = new Set([
   'init',
   'doctor',
   'dsh install',
+  'font off',
+  'font add',
+  'font status',
   'help',
 ]);
 
-const VALUE_FLAGS = new Set(['project', 'width', 'height', 'frames', 'out', 'port']);
-const NUMBER_FLAGS = new Set(['width', 'height', 'frames', 'port']);
+const VALUE_FLAGS = new Set(['project', 'width', 'height', 'frames', 'out', 'port', 'preset', 'size', 'chars', 'name', 'font']);
+const NUMBER_FLAGS = new Set(['width', 'height', 'frames', 'port', 'size']);
 const KNOWN_FLAGS = new Set([
   'project',
   'width',
@@ -46,6 +50,11 @@ const KNOWN_FLAGS = new Set([
   'force',
   'noBuild',
   'noRender',
+  'preset',
+  'size',
+  'chars',
+  'name',
+  'font',
   'help',
 ]);
 
@@ -65,6 +74,9 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   preview      打开实时预览窗口
   init         在现有 ESP-IDF 工程中创建 UI 组件
   doctor       检查工程 / 工具链 / 显示配置
+  font add     生成工程字体子集（默认 tools 内置 Noto Sans SC）
+  font off     移除生成的字体与 theme 接入
+  font status  查看字体模式与缺字
   dsh install  生成 DeepSeek Harness 插件（当前版本可用）
   help         显示本帮助
 
@@ -79,6 +91,11 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   --force           init 兼容参数（v1 不覆盖已有文件）
   --no-render       init 后不做空白页渲染
   --port <n>        serve 起始端口（默认 8765）
+  --preset <name>   font add 字体预设（noto-sans-sc）
+  --size <n>        font add 字号（8..64，默认 16）
+  --chars <text>    font add 额外字符
+  --name <id>       font add 生成的 C 符号名
+  --font <path>     font add 自定义 TTF/OTF（与 --preset 二选一）
 
 退出码: 0 成功；1 构建/渲染失败；2 用法或配置错误；3 运行时/IO 错误`;
 
@@ -142,6 +159,14 @@ export function parseArgs(argv = []) {
     else if (sub !== undefined) {
       positionals.unshift(sub);
       command = 'dsh';
+    }
+  }
+  if (command === 'font') {
+    const sub = positionals.shift();
+    if (sub === 'off' || sub === 'add' || sub === 'status') command = `font ${sub}`;
+    else if (sub !== undefined) {
+      positionals.unshift(sub);
+      command = 'font';
     }
   }
 
@@ -256,9 +281,23 @@ function validationProblem(command, flags, positionals) {
     if (!KNOWN_FLAGS.has(key)) return `未知选项: --${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
   }
   if (positionals.length > 0) {
-    return command === 'dsh install'
-      ? `dsh install 不接受额外参数: ${positionals.join(' ')}`
-      : `多余的参数: ${positionals.join(' ')}`;
+    if (command === 'dsh install') return `dsh install 不接受额外参数: ${positionals.join(' ')}`;
+    if (command === 'font add') {
+      if (positionals.length > 1) return `font add 最多接受一个字体路径: ${positionals.join(' ')}`;
+    } else if (command.startsWith('font ')) {
+      return `${command} 不接受额外参数: ${positionals.join(' ')}`;
+    } else {
+      return `多余的参数: ${positionals.join(' ')}`;
+    }
+  }
+  if (command === 'font add') {
+    if (flags.font !== undefined && flags.preset !== undefined) {
+      return '--font 与 --preset 不能同时使用';
+    }
+    if (flags.size !== undefined
+      && (!Number.isInteger(flags.size) || flags.size < FONT_SIZE_MIN || flags.size > FONT_SIZE_MAX)) {
+      return `--size 必须是 ${FONT_SIZE_MIN}..${FONT_SIZE_MAX} 的整数`;
+    }
   }
   if (typeof flags.project !== 'string' || flags.project.trim() === '') {
     return '--project 需要一个目录路径';
@@ -817,6 +856,52 @@ async function runDshInstall(flags) {
   return 0;
 }
 
+async function runFont(command, flags, positionals) {
+  const ctx = loadFor('font', flags);
+  if (!ctx.ok) return reportContextFailure(ctx, flags.json);
+
+  let result;
+  if (command === 'font add') {
+    result = fontAdd(ctx, {
+      fontPath: flags.font ?? positionals[0],
+      preset: flags.preset,
+      size: flags.size,
+      chars: flags.chars,
+      name: flags.name,
+    });
+  } else if (command === 'font off') {
+    result = fontOff(ctx);
+  } else {
+    result = fontStatus(ctx);
+  }
+
+  if (flags.json) {
+    writeJson(result);
+    return result.ok ? 0 : 2;
+  }
+
+  if (!result.ok) {
+    for (const problem of result.problems ?? ['font operation failed']) {
+      console.error(`[lvglui] ${problem}`);
+    }
+    return 2;
+  }
+
+  if (command === 'font add') {
+    console.log(`[lvglui] font ${result.mode}: ${result.file} (${result.chars} chars, ${result.glyphs} glyphs)`);
+    if ((result.missing ?? []).length > 0) {
+      console.log(`[lvglui] 缺字: ${result.missing.map((cp) => `U+${cp.toString(16).toUpperCase()}`).join(', ')}`);
+    }
+  } else if (command === 'font off') {
+    console.log(`[lvglui] font off; 移除 ${result.removed.length} 个文件`);
+    for (const file of result.removed) console.log(`  - ${file}`);
+  } else {
+    console.log(`[lvglui] font mode=${result.mode} chars=${result.chars} glyphs=${result.glyphs} file=${result.file || '(none)'}`);
+  }
+  for (const warning of result.warnings ?? []) console.error(`[lvglui] warning: ${warning}`);
+  return 0;
+}
+
 /**
  * Run one CLI command. Async because `dsh install` and watch/serve setup use
  * promises; the long-running commands return immediately and keep the event
@@ -868,6 +953,11 @@ export async function main(argv = process.argv.slice(2)) {
         break;
       case 'dsh install':
         code = await runDshInstall(flags);
+        break;
+      case 'font add':
+      case 'font off':
+      case 'font status':
+        code = await runFont(command, flags, positionals);
         break;
       default:
         code = 2;

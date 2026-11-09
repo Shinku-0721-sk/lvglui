@@ -64,14 +64,15 @@ test/                node:test 单测 + 集成测试
   "entry": "ui_start",
   "display": { "width": 240, "height": 320, "colorDepth": 16 },
   "build": { "dir": ".lvglui/build" },
-  "font": { "cjk": true }
+  "font": { "mode": "off" }
 }
 ```
 
 - `idfPath` / `lvglDir` / `uiDir` 可相对工程根
 - `entry` 是 UI 入口函数，默认 `ui_start`
 - `colorDepth` 目前只接受 `16`
-- `font.cjk` 默认 `true`；预览用的 `lv_conf.h` 会强制开启 LVGL 自带的 14/16 中文（固件侧要自己开 `CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_*_CJK`）
+- `font.mode` 默认 `off`：不启用中文字体；`project` 用工程生成的子集；`cjk` 是 LVGL 自带 CJK 子集（覆盖不全，仅兼容旧配置）
+- `font.mode == "project"` 时，`font.file`/`font.size`/`font.name` 由 `font add` 写入；不要手改
 - `build.dir` 只能指向工程内；默认 `.lvglui/build`
 
 ## UI 契约
@@ -99,6 +100,31 @@ void  ui_port_set_relay(bool on);
 
 控件命名用 `lv_obj_set_name(obj, "val_temp")`（预览 `lv_conf.h` 强制开启 `LV_USE_OBJ_NAME`；固件侧也要开），渲染时 `tree.json` 和 PNG 一起给你。
 
+## 中文字体
+
+默认不启用中文字体。需要时运行：
+
+```bash
+lvglui font add --project D:/my_project --preset noto-sans-sc --size 16
+lvglui font status --project D:/my_project
+lvglui font off --project D:/my_project
+```
+
+`font add` 会扫描 `uiDir` 里的 C 字符串字面量，用工具自带的 Noto Sans SC 只生成这些字符的子集：
+
+```text
+components/app_ui/fonts/ui_font_noto_sc_16.c
+components/app_ui/include/ui_font.h
+```
+
+预览和固件编译同一个 `.c`。模板工程有 `src/ui_theme.c` 时自动挂到主题；已有工程没有主题文件时，会生成 `src/ui_font_apply.c`，预览自动应用，固件需在 `ui_start` 之后调用一次：
+
+```c
+lvglui_apply_font(lv_screen_active());
+```
+
+字体原件和 OFL 许可证在 `assets/fonts/`。`font status` 会报告缺字；改完 UI 文案后重新跑一次 `font add`。
+
 ## 命令
 
 | 命令 | 作用 |
@@ -109,6 +135,9 @@ void  ui_port_set_relay(bool on);
 | `serve` | HTTP + SSE 预览（`127.0.0.1:8765`，占用自动 +1） |
 | `preview` | 打开实时窗口；保存→重编→换 `ui.dll`，失败保留旧画面 |
 | `init` | 注入 UI 组件骨架和 `lvglui.json` |
+| `font add` | 按 UI 字符串生成工程中文字体子集（`--preset noto-sans-sc`） |
+| `font off` | 移除工程字体、主题挂载和 CMake 条目 |
+| `font status` | 查看字体模式、字符数和缺字 |
 | `doctor` | 检查工程、IDF/LVGL 版本、工具链、显示配置、平台头 |
 | `dsh install` | 生成 DSH bundle 用的 `dsh/cordis.patch.yml` 并打印安装命令 |
 | `help` | 帮助 |
@@ -122,6 +151,10 @@ void  ui_port_set_relay(bool on);
 - `--no-build`：复用已有 `shot.exe`（shot 缺失时会自动构建）
 - `--json`：`render/build/doctor` 只向 stdout 输出 JSON，日志走 stderr
 - `--no-render`：`init` 后不做空白页渲染
+- `--preset noto-sans-sc`：`font add` 使用工具自带字体
+- `--size 8..64`：字体像素大小
+- `--chars "保存"`：额外加入字体的字符（仍会合并 UI 字符串）
+- `--name ui_font_xxx`：生成字体符号名
 
 退出码：`0` 成功，`1` 构建/渲染失败，`2` 用法/配置错误，`3` 运行时/IO 错误。
 

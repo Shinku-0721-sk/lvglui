@@ -18,7 +18,7 @@ const DEFAULTS = {
   entry: '',
   display: null,
   build: { dir: '.lvglui/build', cmake: '', ninja: '', vcvars: '' },
-  font: { cjk: true },
+  font: { mode: 'off', file: '', size: 16, name: '', cjk: false },
 };
 
 function isPlainObject(value) {
@@ -162,12 +162,35 @@ export function normalizeConfig(data, root) {
     problems.push(`font must be an object, got ${JSON.stringify(data.font)}`);
     config.font = { ...DEFAULTS.font };
   } else {
-    const font = { ...DEFAULTS.font, ...(data.font || {}) };
-    if (font.cjk === undefined) font.cjk = true;
-    else if (typeof font.cjk !== 'boolean') {
-      problems.push(`font.cjk must be a boolean, got ${JSON.stringify(font.cjk)}`);
-      font.cjk = true;
+    const raw = data.font || {};
+    const font = { ...DEFAULTS.font, ...raw };
+    const legacyCjk = raw.mode === undefined && raw.cjk === true;
+    font.mode = raw.mode === undefined ? (legacyCjk ? 'cjk' : 'off') : raw.mode;
+    if (!['off', 'project', 'cjk'].includes(font.mode)) {
+      problems.push(`font.mode must be off, project or cjk, got ${JSON.stringify(font.mode)}`);
+      font.mode = 'off';
     }
+    font.file = stringField(raw.file, '', 'font.file', problems);
+    if (font.mode === 'project') {
+      if (font.file === '') problems.push('font.file is required when font.mode is project');
+      else {
+        const why = relativePathProblem(rootAbs, font.file);
+        if (why) {
+          problems.push(`font.file must stay inside project: "${font.file}" (${why})`);
+          font.file = '';
+        }
+      }
+    }
+    font.size = raw.size === undefined ? 16 : raw.size;
+    if (!Number.isInteger(font.size) || font.size < 8 || font.size > 64) {
+      problems.push(`font.size must be an integer between 8 and 64, got ${JSON.stringify(font.size)}`);
+      font.size = 16;
+    }
+    font.name = stringField(raw.name, '', 'font.name', problems);
+    if (font.name !== '' && !/^[A-Za-z_]\w*$/.test(font.name)) {
+      problems.push(`font.name must be a C identifier, got "${font.name}"`);
+    }
+    font.cjk = font.mode === 'cjk';
     config.font = font;
   }
 

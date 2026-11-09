@@ -16,6 +16,7 @@ const CMakeEntries = [
   ['LVGLUI_ENTRY', 'entry', 'STRING'],
   ['LVGLUI_WIDTH', 'width', 'STRING'],
   ['LVGLUI_HEIGHT', 'height', 'STRING'],
+  ['LVGLUI_FONT_NAME', 'fontName', 'STRING'],
 ];
 
 function isPlainObject(value) {
@@ -59,6 +60,11 @@ function readCtx(ctx) {
   const vcvars = requiredText(ctx, 'toolchain.vcvars', ctx.toolchain.vcvars);
   const cmake = requiredText(ctx, 'toolchain.cmake', ctx.toolchain.cmake);
   const ninja = requiredText(ctx, 'toolchain.ninja', ctx.toolchain.ninja);
+  const font = isPlainObject(ctx.config?.font) ? ctx.config.font : {};
+  const fontName = font.mode === 'project' ? text(font.name) : '';
+  if (fontName !== '' && !/^[A-Za-z_]\w*$/.test(fontName)) {
+    throw new Error(`writeBuildScript: invalid font symbol: ${fontName}`);
+  }
 
   return {
     toolDir,
@@ -69,6 +75,7 @@ function readCtx(ctx) {
     entry,
     width,
     height,
+    fontName,
     vcvars,
     cmake,
     ninja,
@@ -122,6 +129,7 @@ function renderCache(values, buildDir) {
     entry: values.entry,
     width: String(values.width),
     height: String(values.height),
+    fontName: values.fontName,
   };
   const lines = CMakeEntries.map(([name, key, type]) => (
     `set(${name} ${cmakeQuote(mapped[key], key)} CACHE ${type} "")`

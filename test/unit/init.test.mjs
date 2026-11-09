@@ -63,7 +63,7 @@ test('initProject creates the template files and config, then refuses a second r
     assert.equal(config.entry, 'ui_start');
     assert.deepEqual(config.display, { width: 240, height: 320, colorDepth: 16 });
     assert.deepEqual(config.build, { dir: '.lvglui/build' });
-    assert.deepEqual(config.font, { cjk: true });
+    assert.deepEqual(config.font, { mode: 'off', file: '', size: 16, name: '', cjk: false });
     assert.equal(config.idfPath, 'esp-idf');
     assert.equal(config.lvglDir, 'managed_components/lvgl__lvgl');
 

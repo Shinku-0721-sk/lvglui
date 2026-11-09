@@ -11,12 +11,13 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { buildHost } from './build.mjs';
-import { writeLvConf } from './kconfig.mjs';
+import { writeLvConf, applyOverrides } from './kconfig.mjs';
 import { findToolchain } from './toolchain.mjs';
 import { parseDiagnostics } from './diagnostics.mjs';
 import { readTree, compactTree, collectNames } from './tree.mjs';
 import { writeIfChanged, sha256File } from './fsutil.mjs';
 import { encodeRgb565Png } from './png.mjs';
+import { previewOverrides } from './font.mjs';
 
 const DEFAULT_FRAMES = 12;
 const SHOT_TIMEOUT_MS = 120_000;
@@ -111,13 +112,15 @@ function ensureLvConf(ctx, warnings) {
       sdkconfig: ctx.sdkconfig,
       lvglDir: ctx.lvgl.dir,
       out: ctx.lvConfPath,
+      overrides: previewOverrides(ctx.config),
     });
     return;
   }
 
   const fallback = path.join(ctx.toolDir, 'host', 'lv_conf.h');
+  const fallbackText = fs.readFileSync(fallback, 'utf8');
   fs.mkdirSync(path.dirname(ctx.lvConfPath), { recursive: true });
-  fs.copyFileSync(fallback, ctx.lvConfPath);
+  writeIfChanged(ctx.lvConfPath, applyOverrides(fallbackText, previewOverrides(ctx.config)));
   warnings.push(
     ctx.sdkconfig
       ? `sdkconfig is set but ctx.lvgl.dir is missing; copied ${fallback} to ${ctx.lvConfPath}`

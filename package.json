@@ -3,10 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": { "lvglui": "cli/lvglui.mjs" },
+  "bin": {
+    "lvglui": "cli/lvglui.mjs"
+  },
   "scripts": {
     "test": "node --test \"test/unit/*.test.mjs\"",
     "test:integration": "node --test --test-concurrency=1 \"test/integration/*.test.mjs\""
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "lv_font_conv": "^1.5.3"
+  }
 }

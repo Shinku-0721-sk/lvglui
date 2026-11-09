@@ -26,6 +26,9 @@
 /* 界面入口的声明：签名固定，函数名来自上面的宏。用 extern 而不是包含
    ui.h，这样旧的 sensor_ui_create 也能直接作为入口编译。 */
 extern lv_obj_t * LVGLUI_ENTRY(lv_obj_t * parent);
+#ifdef LVGLUI_FONT_NAME
+extern void lvglui_apply_font(lv_obj_t * root);
+#endif
 
 #define MAX_TREE_DEPTH 16
 #define MAX_TREE_NODES 500
@@ -208,6 +211,9 @@ int ui_attach(int width, int height)
         return -3;
     }
     lv_screen_load(s_screen);
+#ifdef LVGLUI_FONT_NAME
+    lvglui_apply_font(s_screen);
+#endif
 #if LV_USE_OBJ_NAME
     dump_names(s_screen, 0);
 #endif

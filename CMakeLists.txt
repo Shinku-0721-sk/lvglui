@@ -36,7 +36,7 @@ set(LVGLUI_CONF_DIR "" CACHE PATH "包含 lv_conf.h 的目录")
 set(LVGLUI_ENTRY "" CACHE STRING "界面入口函数名")
 set(LVGLUI_WIDTH "" CACHE STRING "预览宽度")
 set(LVGLUI_HEIGHT "" CACHE STRING "预览高度")
-
+set(LVGLUI_FONT_NAME "" CACHE STRING "工程字体符号（可选）")
 # ---- 兜底：不带参数时，假定工程就是工具所在仓库 ---------------------------
 if(NOT LVGLUI_PROJECT_DIR)
   get_filename_component(LVGLUI_PROJECT_DIR "${LVGLUI_TOOL_DIR}/../.." ABSOLUTE)
@@ -117,6 +117,9 @@ target_compile_definitions(ui_obj PRIVATE
   LVGLUI_HEIGHT=${LVGLUI_HEIGHT}
   LVGLUI_ENTRY=${LVGLUI_ENTRY}
 )
+if(LVGLUI_FONT_NAME)
+  target_compile_definitions(ui_obj PRIVATE LVGLUI_FONT_NAME=${LVGLUI_FONT_NAME})
+endif()
 if(MSVC)
   target_compile_options(ui_obj PRIVATE /utf-8)
 endif()

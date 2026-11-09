@@ -314,7 +314,7 @@ test('writes a quoted build script and cache for plan-style paths', (t) => {
   assert.match(cache, /set\(LVGLUI_HEIGHT "320" CACHE STRING ""\)/);
 });
 
-test('cache sets all eight variables with the exact values', (t) => {
+test('cache sets all nine variables with the exact values', (t) => {
   const buildDir = tempDir(t, 'lvglui-cache-');
   const r = writeBuildScript(planCtx(buildDir));
   const cache = fs.readFileSync(r.cacheScript, 'utf8');
@@ -328,6 +328,7 @@ test('cache sets all eight variables with the exact values', (t) => {
     'set(LVGLUI_ENTRY "ui_start" CACHE STRING "")',
     'set(LVGLUI_WIDTH "240" CACHE STRING "")',
     'set(LVGLUI_HEIGHT "320" CACHE STRING "")',
+    'set(LVGLUI_FONT_NAME "" CACHE STRING "")',
   ].join('\n')}\n`;
   assert.equal(cache, expected);
 });
