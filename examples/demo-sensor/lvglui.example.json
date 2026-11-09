@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "uiDir": "components/app_ui",
+  "entry": "ui_start",
+  "display": {
+    "width": 240,
+    "height": 320,
+    "colorDepth": 16
+  },
+  "build": {
+    "dir": ".lvglui/build"
+  },
+  "font": {
+    "mode": "off"
+  }
+}

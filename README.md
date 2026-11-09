@@ -6,6 +6,12 @@
 
 它面向**已有的 ESP-IDF 6.x + LVGL 9.x 工程**：LVGL 组件、显示驱动、触摸 BSP 都由工程自己准备好；`lvglui` 只负责 UI 层的搭建、预览、截图和控件树。
 
+<p align="center">
+  <img src="docs/showcase/sensor-dashboard.png" width="320" alt="lvglui 渲染的 240×320 环境监测面板">
+</p>
+
+<p align="center">一个 240×320 的 LVGL 页面，由 lvglui 在 PC 上渲染；源码见 <a href="examples/demo-sensor/">examples/demo-sensor</a>。</p>
+
 ## 前置条件
 
 - Windows 10/11
@@ -46,6 +52,8 @@ cli/                 CLI 入口 + MCP stdio server
 core/                工程发现、配置、IDF/LVGL、构建、渲染、诊断、DSH 安装
 host/                PC 壳：窗口、计时、PNG、UI 树、ABI
 ui-template/         init 注入的 UI 组件模板
+examples/            可复制的示例 UI（demo-sensor 等）
+assets/              内置字体与第三方素材
 dsh/                 DeepSeek Harness bundle（skill + MCP client）
 test/                node:test 单测 + 集成测试
 ```

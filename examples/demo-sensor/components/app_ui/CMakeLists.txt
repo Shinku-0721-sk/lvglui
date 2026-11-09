@@ -1,0 +1,9 @@
+idf_component_register(
+    SRCS
+        "src/ui.c"
+        "src/demo_page.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        lvgl
+)

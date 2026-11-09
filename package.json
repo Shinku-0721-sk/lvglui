@@ -36,6 +36,7 @@
     "dsh/package.json",
     "dsh/cordis.patch.template.yml",
     "docs",
+    "examples",
     "host",
     "ui-template",
     "CMakeLists.txt",
