@@ -235,8 +235,17 @@ skill 的约束是文字约定：只改 `uiDir`、不改 `main`/BSP/`sdkconfig`/
 | 找不到 vcvars/cmake/ninja | 装 VS2022 C++ 工具；或在 `lvglui.json.build` 写显式路径 |
 | `cannot determine display resolution` | 传 `--width/--height`，或写 `lvglui.json.display`，或让 `sdkconfig` 有唯一的一对宽高 |
 | 编译失败 | 看 `<project>/.lvglui/build/build.log` 和 `render --json` 的 `diagnostics` |
-| 中文显示方块 | 预览侧已强制开 CJK；固件侧要自己开 `CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_*_CJK` |
+| 中文显示方块 | 先 `lvglui font status`；需要时 `font add --preset noto-sans-sc`，改文案后重新生成 |
 | `--no-build` 仍构建 | `shot.exe` 不存在时这是预期行为；先跑一次完整 `render` |
+
+## 许可证
+
+- `lvglui` 本体：**AGPL-3.0-or-later**，全文见 [`LICENSE`](LICENSE)。
+- `ui-template/` 以及 `lvglui init` / `font add` 生成的文件：适用 [`LICENSE-EXCEPTION`](LICENSE-EXCEPTION) 的附加例外，可放入任意许可证的工程，AGPL 不延伸到你的工程。
+- Noto Sans SC：SIL OFL 1.1，见 [`assets/fonts/OFL.txt`](assets/fonts/OFL.txt)。
+- 第三方依赖与声明见 [`NOTICE`](NOTICE)。
+
+如果你修改并分发 `lvglui` 本体，AGPL 的源码提供义务适用；用 `lvglui` 生成的 UI/配置不受影响。
 
 ## 开发
 

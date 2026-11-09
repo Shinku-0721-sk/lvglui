@@ -2,6 +2,16 @@
   "name": "lvglui",
   "version": "0.1.0",
   "private": true,
+  "description": "Preview, render, and author LVGL 9.x UIs for ESP-IDF 6.x projects, with MCP and DSH integration.",
+  "license": "AGPL-3.0-or-later",
+  "keywords": [
+    "lvgl",
+    "esp-idf",
+    "esp32",
+    "ui",
+    "preview",
+    "mcp"
+  ],
   "type": "module",
   "bin": {
     "lvglui": "cli/lvglui.mjs"
@@ -13,6 +23,22 @@
   "engines": {
     "node": ">=22"
   },
+  "files": [
+    "assets",
+    "cli",
+    "core",
+    "dsh",
+    "docs",
+    "host",
+    "ui-template",
+    "CMakeLists.txt",
+    "README.md",
+    "LICENSE",
+    "LICENSE-EXCEPTION",
+    "NOTICE",
+    "mcp.example.json",
+    "lvglui.cmd"
+  ],
   "dependencies": {
     "lv_font_conv": "^1.5.3"
   }

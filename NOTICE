@@ -1,0 +1,22 @@
+lvglui
+Copyright (C) 2026 lvglui contributors
+
+This product includes third-party software and data:
+
+1. Noto Sans SC
+   File: assets/fonts/NotoSansSC-Regular.ttf
+   Source: @expo-google-fonts/noto-sans-sc 0.4.4
+   License: SIL Open Font License 1.1
+   See assets/fonts/OFL.txt for the full license text and copyright notice.
+
+2. lv_font_conv 1.5.3
+   License: MIT
+   Used as a runtime dependency to generate LVGL font C files.
+
+3. GB2312 level-1 character list
+   File: assets/fonts/common-gb2312-level1.txt
+   Character data derived from the GB2312 standard, provided as data for
+   generating common-Chinese font subsets.
+
+The lvglui source itself is licensed under AGPL-3.0-or-later, with the
+additional output exception in LICENSE-EXCEPTION.
