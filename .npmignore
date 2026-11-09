@@ -1,0 +1,12 @@
+# Generated per-checkout; installDsh rewrites it with absolute paths.
+dsh/cordis.patch.yml
+
+# Local test/build residue
+.superpowers/
+build/
+out/
+test/.tmp/
+vendor/
+node_modules/
+*.tgz
+*.log

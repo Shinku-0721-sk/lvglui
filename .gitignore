@@ -8,3 +8,6 @@ test/.tmp/
 .lvglui/
 .superpowers/
 dsh/cordis.patch.yml
+
+# npm pack artifacts
+*.tgz

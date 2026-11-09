@@ -19,7 +19,7 @@ import { findToolchain } from '../core/toolchain.mjs';
 
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const FALLBACK_PROTOCOL = PROTOCOL_VERSIONS[0];
-const SERVER_INFO = { name: 'lvglui', version: '0.1.0' };
+const SERVER_INFO = { name: 'lvglui', version: '1.0.0-rc.1' };
 
 const PROJECT_ARG = {
   type: 'string',

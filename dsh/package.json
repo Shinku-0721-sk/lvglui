@@ -1,6 +1,6 @@
 {
   "name": "dsh-lvglui",
-  "version": "0.1.0",
+  "version": "1.0.0-rc.1",
   "private": true,
   "description": "DSH bundle: lvglui skill provider and stdio MCP client.",
   "license": "AGPL-3.0-or-later",

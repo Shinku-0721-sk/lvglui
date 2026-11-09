@@ -1,5 +1,7 @@
 # lvglui — 在 PC 上预览任意 ESP-IDF + LVGL 工程
 
+当前发布候选：`1.0.0-rc.1`（Windows）。
+
 `lvglui` 把工程里同一份 LVGL 界面源码编成 PC 程序：一张 PNG 给无头渲染/CI/模型看，一个窗口给你实时改。
 
 它面向**已有的 ESP-IDF 6.x + LVGL 9.x 工程**：LVGL 组件、显示驱动、触摸 BSP 都由工程自己准备好；`lvglui` 只负责 UI 层的搭建、预览、截图和控件树。
