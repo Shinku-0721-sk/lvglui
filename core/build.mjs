@@ -200,7 +200,7 @@ export function writeBuildScript(ctx) {
   const cacheScript = path.join(values.buildDir, 'lvglui.cmake');
   const script = path.join(values.buildDir, 'build.cmd');
 
-  clearStaleCmakeCache(values.buildDir, values.toolDir);
+  clearStaleCmakeCache(values.buildDir, values);
   writeIfChanged(cacheScript, renderCache(values, values.buildDir));
   writeIfChanged(script, renderScript(values, values.buildDir, cacheScript));
 
@@ -208,17 +208,35 @@ export function writeBuildScript(ctx) {
 }
 
 // A checkout moved or cloned keeps the same relative .lvglui/build path, but
-// CMakeCache.txt records the old tool source directory. CMake then refuses to
-// reuse the cache, so clear the generated directory before reconfiguring.
-function clearStaleCmakeCache(buildDir, toolDir) {
+// CMakeCache.txt records the old tool source directory. Changing lvglui.json
+// (uiDir/entry/font/lvgl) also leaves values that -C cannot override after the
+// first configure. Clear only generated CMake/Ninja state when any of those
+// inputs differs; keep lv_conf.h (written before buildHost) and the build log.
+function clearStaleCmakeCache(buildDir, values) {
   const cacheFile = path.join(buildDir, 'CMakeCache.txt');
   if (!fs.existsSync(cacheFile)) return;
   const text = fs.readFileSync(cacheFile, 'utf8');
-  const match = text.match(/^CMAKE_HOME_DIRECTORY:INTERNAL=(.+)$/m);
-  if (!match) return;
-  if (path.resolve(match[1].trim()) === path.resolve(toolDir)) return;
-  // Keep lv_conf.h (written by renderProject before buildHost) and the build
-  // log; only remove CMake/Ninja state so CMake reconfigures from this checkout.
+
+  const value = (key) => {
+    const match = text.match(new RegExp(`^${key}:[^=]+=(.*)$`, 'm'));
+    return match ? match[1].trim() : null;
+  };
+  const samePath = (actual, expected) =>
+    actual === null || path.resolve(actual).toLowerCase() === path.resolve(expected).toLowerCase();
+
+  const stale =
+    !samePath(value('CMAKE_HOME_DIRECTORY'), values.toolDir) ||
+    !samePath(value('LVGLUI_PROJECT_DIR'), values.root) ||
+    !samePath(value('LVGLUI_UI_DIR'), values.uiDir) ||
+    !samePath(value('LVGLUI_LVGL_DIR'), values.lvglDir) ||
+    !samePath(value('LVGLUI_FONT_PATH'), values.fontPath) ||
+    (value('LVGLUI_ENTRY') !== null && value('LVGLUI_ENTRY') !== values.entry) ||
+    (value('LVGLUI_FONT_NAME') !== null && value('LVGLUI_FONT_NAME') !== values.fontName) ||
+    (value('LVGLUI_FREETYPE') !== null && value('LVGLUI_FREETYPE') !== (values.freetype ? 'ON' : 'OFF')) ||
+    (value('LVGLUI_FREETYPE_DIR') !== null && value('LVGLUI_FREETYPE_DIR') !== values.freetypeDir);
+
+  if (!stale) return;
+
   for (const name of ['CMakeCache.txt', 'CMakeFiles', 'build.ninja', '.ninja_deps', '.ninja_log', 'cmake_install.cmake']) {
     fs.rmSync(path.join(buildDir, name), { recursive: true, force: true });
   }

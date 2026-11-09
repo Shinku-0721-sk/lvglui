@@ -585,3 +585,16 @@ test('clears a CMake cache produced by a different tool checkout', (t) => {
   assert.equal(fs.existsSync(r.script), true);
   assert.equal(fs.existsSync(r.cacheScript), true);
 });
+
+test('clears a CMake cache when the configured uiDir changed', (t) => {
+  const buildDir = tempDir(t, 'lvglui-stale-ui-');
+  fs.mkdirSync(buildDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(buildDir, 'CMakeCache.txt'),
+    'LVGLUI_UI_DIR:PATH=D:/old/components/app_ui\n',
+  );
+
+  writeBuildScript(planCtx(buildDir));
+
+  assert.equal(fs.existsSync(path.join(buildDir, 'CMakeCache.txt')), false);
+});
