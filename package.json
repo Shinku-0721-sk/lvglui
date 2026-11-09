@@ -4,6 +4,10 @@
   "private": true,
   "description": "Preview, render, and author LVGL 9.x UIs for ESP-IDF 6.x projects, with MCP and DSH integration.",
   "license": "AGPL-3.0-or-later",
+  "contributors": [
+    "Shinku_721",
+    "DeepSeek"
+  ],
   "keywords": [
     "lvgl",
     "esp-idf",
@@ -36,6 +40,7 @@
     "ui-template",
     "CMakeLists.txt",
     "CHANGELOG.md",
+    "CONTRIBUTORS.md",
     "README.md",
     "LICENSE",
     "LICENSE-EXCEPTION",

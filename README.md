@@ -240,6 +240,13 @@ skill 的约束是文字约定：只改 `uiDir`、不改 `main`/BSP/`sdkconfig`/
 | 中文显示方块 | 先 `lvglui font status`；需要时 `font add --preset noto-sans-sc`，改文案后重新生成 |
 | `--no-build` 仍构建 | `shot.exe` 不存在时这是预期行为；先跑一次完整 `render` |
 
+## 贡献者
+
+- [Shinku_721](https://gitee.com/shinku_721) — 项目所有者、需求与验收
+- **DeepSeek** — AI 编程协作：架构、实现、测试、文档与发布工程
+
+完整名单见 [`CONTRIBUTORS.md`](CONTRIBUTORS.md)。
+
 ## 许可证
 
 - `lvglui` 本体：**AGPL-3.0-or-later**，全文见 [`LICENSE`](LICENSE)。
