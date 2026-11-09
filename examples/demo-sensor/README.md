@@ -7,7 +7,7 @@ A 240×320 LVGL 9.6 page used for the README screenshot.
 ## What it shows
 
 - dark card layout on a 240×320 screen
-- `lv_arc` gauge, two-column metric cards, status badge
+- DeepSeek Q avatar image (RGB565 C array), two-column metric cards, status badge
 - Chinese labels rendered from a project font subset
 - entry point `ui_start(parent)` that fits both the previewer and firmware
 

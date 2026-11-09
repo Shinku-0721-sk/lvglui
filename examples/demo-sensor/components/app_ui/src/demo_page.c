@@ -1,4 +1,5 @@
 #include "demo_page.h"
+#include "demo_avatar.h"
 
 #define C_BG       0x0B1220
 #define C_CARD     0x141E32
@@ -119,24 +120,21 @@ lv_obj_t *demo_sensor_create(lv_obj_t *parent)
     lv_obj_set_flex_flow(hero, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(hero, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    lv_obj_t *arc = lv_arc_create(hero);
-    lv_obj_set_size(arc, 70, 70);
-    lv_arc_set_rotation(arc, 0);
-    lv_arc_set_bg_angles(arc, 135, 45);
-    lv_arc_set_range(arc, 0, 100);
-    lv_arc_set_value(arc, 68);
-    lv_obj_set_style_arc_width(arc, 7, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(arc, lv_color_hex(C_BORDER), LV_PART_MAIN);
-    lv_obj_set_style_arc_width(arc, 7, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(arc, lv_color_hex(C_CYAN), LV_PART_INDICATOR);
-    lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_KNOB);
-    lv_obj_set_style_border_width(arc, 0, LV_PART_KNOB);
-    lv_obj_remove_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *avatar_box = lv_obj_create(hero);
+    lv_obj_remove_flag(avatar_box, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(avatar_box, 70, 70);
+    lv_obj_set_style_bg_opa(avatar_box, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(avatar_box, 2, 0);
+    lv_obj_set_style_border_color(avatar_box, lv_color_hex(C_CYAN), 0);
+    lv_obj_set_style_radius(avatar_box, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_clip_corner(avatar_box, true, 0);
+    lv_obj_set_style_pad_all(avatar_box, 0, 0);
 
-    lv_obj_t *arc_value = lv_label_create(arc);
-    lv_label_set_text(arc_value, "68%");
-    lv_obj_set_style_text_color(arc_value, lv_color_hex(C_TEXT), 0);
-    lv_obj_center(arc_value);
+    lv_obj_t *avatar = lv_image_create(avatar_box);
+    lv_image_set_src(avatar, &demo_avatar);
+    lv_image_set_scale(avatar, 140);
+    lv_obj_center(avatar);
+    lv_obj_remove_flag(avatar, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *info = lv_obj_create(hero);
     lv_obj_remove_flag(info, LV_OBJ_FLAG_SCROLLABLE);
