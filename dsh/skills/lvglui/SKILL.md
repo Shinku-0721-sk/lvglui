@@ -43,6 +43,7 @@ description: 在 ESP-IDF 6.x + LVGL 9.x 工程里编写或调整 UI 页面：用
 - 不改 `main/`、BSP、`sdkconfig`、工程级 `CMakeLists.txt`、`managed_components/`。
 - 不做点击/滑动/动画的交互模拟；v1 只验证静态布局和初始数据。
 - 不拉 LVGL 组件、不搭显示/触摸 bridge；这些是用户的前置工作。
+- **不烧录、不碰串口**：禁止运行 `idf.py flash/monitor/erase-flash`、`esptool`、任何串口读写或 eFuse/分区表/bootloader 操作；工具本身也没有 `flash` 命令。用户要求烧板时，说明这是人工步骤：给出编译产物和 `idf.py -p <PORT> flash` 命令，由用户自己执行。原因：烧录本身可恢复，但未验证的业务逻辑可能驱动执行器（电机/加热/继电器），风险由固件内容决定，须由人把关。
 
 ## 典型页面骨架
 

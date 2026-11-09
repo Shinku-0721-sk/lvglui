@@ -235,6 +235,7 @@ skill 的约束是文字约定：只改 `uiDir`、不改 `main`/BSP/`sdkconfig`/
 - Windows + ESP-IDF 6.x + LVGL 9.x
 - 不拉 LVGL 组件、不配 component manager、不搭显示/触摸 BSP
 - 不做写入审计；UI 层边界靠 skill 约定
+- **不烧录、不接触串口**：工具没有 `flash` 命令，MCP 也不暴露任何串口/烧录能力。它只编译出一份 host 预览产物；把固件写进板子始终是人工步骤（`idf.py flash`）。同理，工具从不操作 eFuse、bootloader、分区表——这些才是真正不可逆的操作
 
 ## 故障排查
 
