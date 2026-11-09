@@ -199,9 +199,77 @@ test('fontStatus reports missing non-ASCII characters when off and project mode 
   assert.ok(!status.missing.includes('保'));
 });
 
-test('previewOverrides only keeps built-in CJK fonts in cjk mode', () => {
-  const cjkKeys = (overrides) => Object.keys(overrides).filter((k) => k.startsWith('LV_FONT_SOURCE_HAN_SANS_SC_'));
-  assert.equal(cjkKeys(previewOverrides({ font: { mode: 'cjk' } })).length, 2);
-  assert.equal(cjkKeys(previewOverrides({ font: { mode: 'off' } })).length, 0);
-  assert.equal(cjkKeys(previewOverrides({ font: { mode: 'project' } })).length, 0);
+test('fontAdd preserves detected project fields when config is absent', () => {
+  const { root, uiDir, ctx } = fixture({ withTheme: false });
+  const detected = {
+    ...ctx,
+    entry: 'sensor_ui_create',
+    display: { width: 240, height: 320, colorDepth: 16 },
+    idf: { path: 'E:/esp/v6.1/esp-idf' },
+    lvgl: { dir: path.join(root, 'managed_components', 'lvgl__lvgl') },
+    config: { ...ctx.config, uiDir: '', entry: '', display: null, idfPath: '', lvglDir: '' },
+  };
+  const fake = (args) => {
+    fs.writeFileSync(args[args.indexOf('--output') + 1], '/* U+4FDD */\n', 'utf8');
+    return { status: 0 };
+  };
+  const result = fontAdd(detected, { preset: FONT_PRESET, size: 16, run: fake });
+  assert.equal(result.ok, true, JSON.stringify(result.problems));
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'lvglui.json'), 'utf8'));
+  assert.equal(config.uiDir, 'components/app_ui');
+  assert.equal(config.entry, 'sensor_ui_create');
+  assert.deepEqual(config.display, { width: 240, height: 320, colorDepth: 16 });
+  assert.equal(config.idfPath, 'E:/esp/v6.1/esp-idf');
+  assert.equal(config.lvglDir, 'managed_components/lvgl__lvgl');
+});
+
+test('previewOverrides enables host FreeType only for freetype mode', () => {
+  const overrides = previewOverrides({ font: { mode: 'freetype' } });
+  assert.equal(overrides.LV_USE_FREETYPE, '1');
+  assert.equal(overrides.LV_FREETYPE_USE_LVGL_PORT, '0');
+  assert.equal(Object.keys(overrides).filter((k) => k.startsWith('LV_FONT_SOURCE_HAN_SANS_SC_')).length, 0);
+});
+
+test('fontAdd freetype copies the TTF and writes a path-based apply hook', () => {
+  const { root, uiDir, ctx } = fixture();
+  const ttf = path.join(root, 'MyFont.ttf');
+  fs.writeFileSync(ttf, 'fake-ttf', 'utf8');
+
+  const result = fontAdd(ctx, {
+    fontPath: ttf,
+    dynamic: 'freetype',
+    size: 24,
+    fsPath: 'A:/fonts/MyFont.ttf',
+  });
+  assert.equal(result.ok, true, JSON.stringify(result.problems));
+  assert.equal(result.dynamic, 'freetype');
+  assert.equal(result.glyphs, 0);
+
+  const copied = path.join(uiDir, 'fonts', 'MyFont.ttf');
+  assert.ok(fs.existsSync(copied));
+  const apply = fs.readFileSync(path.join(uiDir, 'src', 'ui_font_apply.c'), 'utf8');
+  assert.ok(apply.includes('#define LVGLUI_FONT_PATH "A:/fonts/MyFont.ttf"'));
+  assert.ok(apply.includes('lv_freetype_font_create(LVGLUI_FONT_PATH,'));
+  assert.ok(apply.includes('LV_FREETYPE_FONT_RENDER_MODE_BITMAP, 24'));
+  assert.match(apply, /#if LV_USE_FREETYPE/);
+  const theme = fs.readFileSync(path.join(uiDir, 'src', 'ui_theme.c'), 'utf8');
+  assert.match(theme, /lvglui_apply_font\(root\);/);
+  const cmake = fs.readFileSync(path.join(uiDir, 'CMakeLists.txt'), 'utf8');
+  assert.match(cmake, /"src\/ui_font_apply\.c"/);
+  assert.doesNotMatch(cmake, /"fonts\/ui_font_/);
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'lvglui.json'), 'utf8'));
+  assert.equal(config.font.mode, 'freetype');
+  assert.equal(config.font.dynamic, 'freetype');
+  assert.equal(config.font.file, 'components/app_ui/fonts/MyFont.ttf');
+  assert.equal(config.font.fsPath, 'A:/fonts/MyFont.ttf');
+
+  const status = fontStatus({ ...ctx, config: result.config });
+  assert.equal(status.mode, 'freetype');
+  assert.equal(status.fsPath, 'A:/fonts/MyFont.ttf');
+
+  const off = fontOff({ ...ctx, config: result.config });
+  assert.equal(off.ok, true);
+  assert.equal(fs.existsSync(copied), false);
+  assert.equal(fs.existsSync(path.join(uiDir, 'src', 'ui_font_apply.c')), false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'lvglui.json'), 'utf8')).font.mode, 'off');
 });

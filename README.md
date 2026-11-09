@@ -71,9 +71,9 @@ test/                node:test 单测 + 集成测试
 - `idfPath` / `lvglDir` / `uiDir` 可相对工程根
 - `entry` 是 UI 入口函数，默认 `ui_start`
 - `colorDepth` 目前只接受 `16`
-- `font.mode` 默认 `off`：不启用中文字体；`project` 用工程生成的子集；`cjk` 是 LVGL 自带 CJK 子集（覆盖不全，仅兼容旧配置）
-- `font.dynamic` 默认 `labels`：只生成 UI 字符串用到的字符；`common` 生成 GB2312 一级 3755 常用字 + UI 字符 + ASCII，适合动态中文
-- `font.mode == "project"` 时，`font.file`/`font.size`/`font.name` 由 `font add` 写入；不要手改
+- `font.mode` 默认 `off`：不启用中文字体；`project` 用工程生成的子集；`cjk` 是 LVGL 自带 CJK 子集（覆盖不全，仅兼容旧配置）；`freetype` 用运行时 FreeType（用户自带组件与文件系统）
+- `font.dynamic` 默认 `labels`：只生成 UI 字符串用到的字符；`common` 生成 GB2312 一级 3755 常用字 + UI 字符 + ASCII，适合动态中文；`freetype` 由运行时 FreeType 渲染
+- `font.mode == "project"` 时，`font.file`/`font.size`/`font.name` 由 `font add` 写入；`font.mode == "freetype"` 时写 `font.file`/`font.size`/`font.fsPath`/`font.freetypeDir`；不要手改
 - `build.dir` 只能指向工程内；默认 `.lvglui/build`
 
 ## UI 契约
@@ -134,6 +134,32 @@ lvglui_apply_font(lv_screen_active());
 
 字体原件和 OFL 许可证在 `assets/fonts/`。`font status` 会报告缺字；改完 UI 文案后重新跑一次 `font add`。
 
+### FreeType（可选高级模式）
+
+需要任意中文、不想每次改文案都重新生成子集时，用 FreeType 运行时渲染。这是 BYO 模式：工具只复制 TTF、生成配置和 apply 代码，不提供 `esp_freetype`、分区表或 SPIFFS 镜像。
+
+```bash
+lvglui font add --project D:/my_project \
+  --dynamic freetype \
+  --font D:/fonts/NotoSansSC-Regular.ttf \
+  --fs-path A:/fonts/NotoSansSC-Regular.ttf \
+  --freetype-dir E:/freetype
+```
+
+- `--font`：TTF/OTF 源文件；会复制到 `components/app_ui/fonts/`。
+- `--fs-path`：固件运行时路径（通常是 SPIFFS/FATFS 挂载点），默认 `A:/fonts/<文件名>`。
+- `--freetype-dir`：**预览端** FreeType 安装前缀（含 `include/freetype2` 与 `lib`）；不传则让 CMake 在系统路径里找。
+
+固件侧需要：`LV_USE_FREETYPE=1`、`esp_freetype`（或等价实现）、TTF 已烧进 `fs-path` 指向的文件系统。预览侧需要主机 FreeType 头/库；Windows 上还要把 `freetype.dll` 所在目录加入 `PATH`，否则渲染会报找不到 DLL。
+
+生成的 `src/ui_font_apply.c` 在 `LVGLUI_FONT_PATH` 下创建字体；主机构建会用工程内 TTF 绝对路径覆盖该宏，固件用 `fs-path`。没有 `ui_theme.c` 的工程，固件仍需在 `ui_start` 后调用：
+
+```c
+lvglui_apply_font(lv_screen_active());
+```
+
+FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次渲染有解析成本；字符集不受限。`font off` 会删除复制的 TTF、apply 代码和配置项。
+
 ## 命令
 
 | 命令 | 作用 |
@@ -144,7 +170,7 @@ lvglui_apply_font(lv_screen_active());
 | `serve` | HTTP + SSE 预览（`127.0.0.1:8765`，占用自动 +1） |
 | `preview` | 打开实时窗口；保存→重编→换 `ui.dll`，失败保留旧画面 |
 | `init` | 注入 UI 组件骨架和 `lvglui.json` |
-| `font add` | 生成工程字体：默认 labels 子集，`--dynamic common` 生成常用字大子集 |
+| `font add` | 生成工程字体：默认 labels 子集，`--dynamic common` 常用字大子集，`--dynamic freetype` 运行时 FreeType |
 | `font off` | 移除工程字体、主题挂载和 CMake 条目 |
 | `font status` | 查看字体模式、字符数和缺字 |
 | `doctor` | 检查工程、IDF/LVGL 版本、工具链、显示配置、平台头 |
@@ -163,7 +189,10 @@ lvglui_apply_font(lv_screen_active());
 - `--preset noto-sans-sc`：`font add` 使用工具自带字体
 - `--size 8..64`：字体像素大小
 - `--chars "保存"`：额外加入字体的字符（仍会合并 UI 字符串）
-- `--dynamic labels|common`：`labels` 只收 UI 字符（默认）；`common` 加 GB2312 一级 3755 常用字
+- `--dynamic labels|common|freetype`：`labels` 只收 UI 字符（默认）；`common` 加 GB2312 一级 3755 常用字；`freetype` 用运行时 FreeType
+- `--font <ttf>`：`font add` 的源字体文件（默认工具自带 Noto Sans SC）
+- `--fs-path A:/fonts/x.ttf`：FreeType 固件运行时路径
+- `--freetype-dir <prefix>`：预览端 FreeType 安装前缀
 - `--name ui_font_xxx`：生成字体符号名
 
 退出码：`0` 成功，`1` 构建/渲染失败，`2` 用法/配置错误，`3` 运行时/IO 错误。

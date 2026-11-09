@@ -18,7 +18,7 @@ const DEFAULTS = {
   entry: '',
   display: null,
   build: { dir: '.lvglui/build', cmake: '', ninja: '', vcvars: '' },
-  font: { mode: 'off', dynamic: 'labels', file: '', size: 16, name: '', cjk: false },
+  font: { mode: 'off', dynamic: 'labels', file: '', size: 16, name: '', cjk: false, fsPath: '', freetypeDir: '' },
 };
 
 function isPlainObject(value) {
@@ -166,18 +166,22 @@ export function normalizeConfig(data, root) {
     const font = { ...DEFAULTS.font, ...raw };
     const legacyCjk = raw.mode === undefined && raw.cjk === true;
     font.mode = raw.mode === undefined ? (legacyCjk ? 'cjk' : 'off') : raw.mode;
-    if (!['off', 'project', 'cjk'].includes(font.mode)) {
-      problems.push(`font.mode must be off, project or cjk, got ${JSON.stringify(font.mode)}`);
+    if (!['off', 'project', 'cjk', 'freetype'].includes(font.mode)) {
+      problems.push(`font.mode must be off, project, cjk or freetype, got ${JSON.stringify(font.mode)}`);
       font.mode = 'off';
     }
     font.file = stringField(raw.file, '', 'font.file', problems);
     font.dynamic = raw.dynamic === undefined ? 'labels' : raw.dynamic;
-    if (!['labels', 'common'].includes(font.dynamic)) {
-      problems.push(`font.dynamic must be labels or common, got ${JSON.stringify(font.dynamic)}`);
+    if (!['labels', 'common', 'freetype'].includes(font.dynamic)) {
+      problems.push(`font.dynamic must be labels, common or freetype, got ${JSON.stringify(font.dynamic)}`);
       font.dynamic = 'labels';
     }
-    if (font.mode === 'project') {
-      if (font.file === '') problems.push('font.file is required when font.mode is project');
+    if (font.dynamic === 'freetype' && font.mode !== 'freetype') {
+      problems.push('font.dynamic freetype requires font.mode freetype');
+      font.dynamic = 'labels';
+    }
+    if (font.mode === 'project' || font.mode === 'freetype') {
+      if (font.file === '') problems.push(`font.file is required when font.mode is ${font.mode}`);
       else {
         const why = relativePathProblem(rootAbs, font.file);
         if (why) {
@@ -194,6 +198,19 @@ export function normalizeConfig(data, root) {
     font.name = stringField(raw.name, '', 'font.name', problems);
     if (font.name !== '' && !/^[A-Za-z_]\w*$/.test(font.name)) {
       problems.push(`font.name must be a C identifier, got "${font.name}"`);
+    }
+    font.fsPath = stringField(raw.fsPath, '', 'font.fsPath', problems);
+    if (font.fsPath !== '' && /[\r\n"]/.test(font.fsPath)) {
+      problems.push('font.fsPath must not contain quotes or newlines');
+      font.fsPath = '';
+    }
+    if (font.mode === 'freetype' && font.fsPath === '') {
+      problems.push('font.fsPath is required when font.mode is freetype');
+    }
+    font.freetypeDir = stringField(raw.freetypeDir, '', 'font.freetypeDir', problems);
+    if (font.freetypeDir !== '' && /[\r\n"]/.test(font.freetypeDir)) {
+      problems.push('font.freetypeDir must not contain quotes or newlines');
+      font.freetypeDir = '';
     }
     font.cjk = font.mode === 'cjk';
     config.font = font;

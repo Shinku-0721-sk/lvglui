@@ -17,6 +17,9 @@ const CMakeEntries = [
   ['LVGLUI_WIDTH', 'width', 'STRING'],
   ['LVGLUI_HEIGHT', 'height', 'STRING'],
   ['LVGLUI_FONT_NAME', 'fontName', 'STRING'],
+  ['LVGLUI_FREETYPE', 'freetype', 'BOOL'],
+  ['LVGLUI_FREETYPE_DIR', 'freetypeDir', 'PATH'],
+  ['LVGLUI_FONT_PATH', 'fontPath', 'FILEPATH'],
 ];
 
 function isPlainObject(value) {
@@ -65,6 +68,15 @@ function readCtx(ctx) {
   if (fontName !== '' && !/^[A-Za-z_]\w*$/.test(fontName)) {
     throw new Error(`writeBuildScript: invalid font symbol: ${fontName}`);
   }
+  const freetype = font.mode === 'freetype';
+  const freetypeDir = freetype ? text(font.freetypeDir) : '';
+  if (freetypeDir !== '' && (freetypeDir.includes('"') || freetypeDir.includes('\r') || freetypeDir.includes('\n'))) {
+    throw new Error('writeBuildScript: invalid font.freetypeDir');
+  }
+  const fontPath = freetype && text(font.file) !== '' ? path.resolve(ctx.root, text(font.file)) : '';
+  if (fontPath !== '' && (fontPath.includes('"') || fontPath.includes('\r') || fontPath.includes('\n'))) {
+    throw new Error('writeBuildScript: invalid font.file');
+  }
 
   return {
     toolDir,
@@ -76,6 +88,9 @@ function readCtx(ctx) {
     width,
     height,
     fontName,
+    freetype,
+    freetypeDir,
+    fontPath,
     vcvars,
     cmake,
     ninja,
@@ -130,6 +145,9 @@ function renderCache(values, buildDir) {
     width: String(values.width),
     height: String(values.height),
     fontName: values.fontName,
+    freetype: values.freetype ? 'ON' : 'OFF',
+    freetypeDir: values.freetypeDir,
+    fontPath: values.fontPath,
   };
   const lines = CMakeEntries.map(([name, key, type]) => (
     `set(${name} ${cmakeQuote(mapped[key], key)} CACHE ${type} "")`

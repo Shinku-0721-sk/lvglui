@@ -138,7 +138,7 @@ function buildConfig({ rootAbs, uiDir, width, height, idfPath, lvglDir }) {
   config.entry = 'ui_start';
   config.display = { width, height, colorDepth: 16 };
   config.build = { dir: '.lvglui/build' };
-  config.font = { mode: 'off', dynamic: 'labels', file: '', size: 16, name: '', cjk: false };
+  config.font = { mode: 'off', dynamic: 'labels', file: '', size: 16, name: '', cjk: false, fsPath: '', freetypeDir: '' };
   return config;
 }
 
