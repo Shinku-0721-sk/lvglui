@@ -29,6 +29,12 @@ extern lv_obj_t * LVGLUI_ENTRY(lv_obj_t * parent);
 #ifdef LVGLUI_FONT_APPLY
 extern void lvglui_apply_font(lv_obj_t * root);
 #endif
+#ifdef LVGLUI_HAS_PAGES
+/* 页面契约（可选）：与 ui_entry.c 之间只传函数指针，不共享结构体。 */
+extern int ui_page_count(void);
+extern const char * ui_page_name(int index);
+extern lv_obj_t * ui_page_show(int index, lv_obj_t * parent);
+#endif
 
 #define MAX_TREE_DEPTH 16
 #define MAX_TREE_NODES 500
@@ -41,6 +47,8 @@ static uint32_t s_version;
 static int s_width;
 static int s_height;
 static bool s_attached;
+/* -1 = 走 LVGLUI_ENTRY（单入口老路子）；>=0 = 走 ui_page_show(index)。 */
+static int s_page = -1;
 
 #if LV_USE_OBJ_NAME
 /* 把树里所有设过名字的控件打印出来：固件那边靠 lv_obj_find_by_name 找它们，
@@ -185,6 +193,54 @@ void ui_dump_tree(const char * path)
     fclose(f);
 }
 
+int ui_page_total(void)
+{
+#ifdef LVGLUI_HAS_PAGES
+    int n = ui_page_count();
+    return n > 0 ? n : 0;
+#else
+    return 0;
+#endif
+}
+
+const char * ui_page_name_at(int index)
+{
+#ifdef LVGLUI_HAS_PAGES
+    if(index < 0 || index >= ui_page_total()) return NULL;
+    const char * name = ui_page_name(index);
+    return (name && name[0]) ? name : NULL;
+#else
+    (void)index;
+    return NULL;
+#endif
+}
+
+int ui_set_page(int index)
+{
+    if(index < -1) return -1;
+#ifdef LVGLUI_HAS_PAGES
+    if(index >= ui_page_total()) return -1;
+#else
+    if(index >= 0) return -1;
+#endif
+    s_page = index;
+    return 0;
+}
+
+/* 建根控件：有页面契约且指定了页就走页面，否则走单入口函数。 */
+static lv_obj_t * build_root(void)
+{
+    if(s_page >= 0) {
+#ifdef LVGLUI_HAS_PAGES
+        return ui_page_show(s_page, NULL);
+#else
+        fprintf(stderr, "[ui] 指定了页 %d，但界面没有 ui_page_* 契约\n", s_page);
+        return NULL;
+#endif
+    }
+    return LVGLUI_ENTRY(NULL);
+}
+
 int ui_attach(int width, int height)
 {
     if(width <= 0 || height <= 0) return -1;
@@ -205,9 +261,10 @@ int ui_attach(int width, int height)
 
     lv_display_set_theme(s_disp, lv_theme_simple_init(s_disp));
 
-    s_screen = LVGLUI_ENTRY(NULL);
+    s_screen = build_root();
     if(!s_screen) {
-        fprintf(stderr, "[ui] 入口函数返回了 NULL\n");
+        if(s_page >= 0) fprintf(stderr, "[ui] 第 %d 页没有返回根控件\n", s_page);
+        else fprintf(stderr, "[ui] 入口函数返回了 NULL\n");
         return -3;
     }
     lv_screen_load(s_screen);

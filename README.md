@@ -111,6 +111,31 @@ void  ui_port_set_relay(bool on);
 
 控件命名用 `lv_obj_set_name(obj, "val_temp")`（预览 `lv_conf.h` 强制开启 `LV_USE_OBJ_NAME`；固件侧也要开），渲染时 `tree.json` 和 PNG 一起给你。
 
+## 多页界面
+
+默认只渲染入口 `ui_start()` 返回的那一屏。要让工具按页渲染，UI 组件里再实现三个函数（可选契约，签名固定，不需要共享头文件结构）：
+
+```c
+/* ui_pages.h */
+int         ui_page_count(void);
+const char *ui_page_name(int index);              /* 稳定 id，用作文件名 */
+lv_obj_t   *ui_page_show(int index, lv_obj_t *parent);
+```
+
+`ui_page_show(index, NULL)` 自己创建根 screen 并加载它；`parent` 非 NULL 时只在该对象里建页，不要 `lv_screen_load`。
+
+```bash
+lvglui render --all-pages          # 每页 shot-<name>.png + tree-<name>.json，另出 shot-sheet.png 总览
+lvglui render --page settings      # 只渲染这一页，仍写 shot.png / tree.json
+```
+
+- 总览图按 `meta.json` 的 `pages` 顺序排：≤4 页两列，否则四列，格间距 8px，底色 `#101820`，不放文字标签
+- `meta.json` 里 `pages[]` 有每页的 `name/png/sha256/bytes/nodes`，`allPages: true`
+- 一个 `_page_` 函数都不实现时，行为与今天完全一致；只实现一部分会直接报“契约不完整”，不会拖到链接期
+- 每页单独起一个 `shot.exe` 进程，避免复用 LVGL 引擎产生悬空指针
+
+`init` 生成的模板自带 `ui_pages.c`（默认一页 `home`），新增页面只需往页面表里加一行。
+
 ## 中文字体
 
 默认不启用中文字体。需要时运行：
@@ -194,6 +219,8 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 - `--frames <n>`：渲染帧数，默认 12
 - `--out <dir>`：输出**目录**（不是 PNG 文件路径）
 - `--no-build`：复用已有 `shot.exe`（shot 缺失时会自动构建）
+- `--page <name>`：只渲染某一页（需要 `ui_page_*` 契约）
+- `--all-pages`：渲染所有页，另出 `shot-sheet.png` 总览
 - `--json`：`render/build/doctor` 只向 stdout 输出 JSON，日志走 stderr
 - `--no-render`：`init` 后不做空白页渲染
 - `--preset noto-sans-sc`：`font add` 使用工具自带字体

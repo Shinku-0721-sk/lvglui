@@ -10,6 +10,12 @@
  * so the picture is what the board will show.
  *
  *   shot.exe [--out preview.png] [--frames 12] [--tree tree.json]
+ *            [--raw frame.bin] [--page N] [--list-pages pages.txt]
+ *
+ * `--page N` renders one page of the optional ui_page_* contract;
+ * `--list-pages` only writes the page names (one per line, render order) and
+ * exits. Multi-page rendering runs one process per page: each run gets a
+ * fresh LVGL engine, so no state leaks between pages.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,21 +25,56 @@
 
 #define FRAME_MS 33
 
+static int list_pages(const char *path)
+{
+    int total = ui_page_total();
+    if(total <= 0) {
+        fprintf(stderr, "this UI has no ui_page_count/ui_page_name/ui_page_show contract\n");
+        return 2;
+    }
+    FILE * f = fopen(path, "wb");
+    if(!f) {
+        fprintf(stderr, "cannot write %s\n", path);
+        return 1;
+    }
+    for(int i = 0; i < total; i++) {
+        const char * name = ui_page_name_at(i);
+        fprintf(f, "%s\n", name ? name : "");
+    }
+    fclose(f);
+    printf("pages %d\n", total);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     const char *out = "preview.png";
     const char *raw = NULL;
     const char *tree_path = NULL;
+    const char *pages_path = NULL;
     int frames = 12;
+    int page = -1;
 
     for(int i = 1; i < argc; ++i) {
         if(strcmp(argv[i], "--out") == 0 && i + 1 < argc) out = argv[++i];
         else if(strcmp(argv[i], "--raw") == 0 && i + 1 < argc) raw = argv[++i];
         else if(strcmp(argv[i], "--tree") == 0 && i + 1 < argc) tree_path = argv[++i];
         else if(strcmp(argv[i], "--frames") == 0 && i + 1 < argc) frames = atoi(argv[++i]);
+        else if(strcmp(argv[i], "--page") == 0 && i + 1 < argc) page = atoi(argv[++i]);
+        else if(strcmp(argv[i], "--list-pages") == 0 && i + 1 < argc) pages_path = argv[++i];
     }
 
-    if(ui_attach(LVGLUI_WIDTH, LVGLUI_HEIGHT) != 0) { fprintf(stderr, "ui_attach failed\n"); return 1; }
+    if(pages_path) return list_pages(pages_path);
+
+    if(page >= 0 && ui_set_page(page) != 0) {
+        fprintf(stderr, "unknown page %d (no ui_page_* contract, or index out of range)\n", page);
+        return 3;
+    }
+
+    if(ui_attach(LVGLUI_WIDTH, LVGLUI_HEIGHT) != 0) {
+        fprintf(stderr, "ui_attach failed\n");
+        return 1;
+    }
     for(int i = 0; i < frames; ++i) ui_tick(FRAME_MS);
 
     if(tree_path) ui_dump_tree(tree_path);

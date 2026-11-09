@@ -11,6 +11,7 @@ import { discoverProject } from './discover.mjs';
 import { findIdf } from './idf.mjs';
 import { findLvgl } from './lvgl.mjs';
 import { detectDisplay } from './display.mjs';
+import { detectPages } from './pages.mjs';
 import { parseSdkconfig } from './kconfig.mjs';
 import { readText } from './fsutil.mjs';
 
@@ -79,6 +80,7 @@ export function loadContext({
       entry: null,
       entryHow: null,
       sources: [],
+      pages: detectPages([]),
       idf: emptyIdf(),
       lvgl: emptyLvgl(),
       display: emptyDisplay(),
@@ -188,6 +190,11 @@ export function loadContext({
     problems.push(e.message);
   }
 
+  // Optional multi-page contract: static scan only (no compile), so a partial
+  // contract becomes a precise problem instead of a link error later.
+  const pages = detectPages(discovery.sources);
+  problems.push(...pages.problems);
+
   const mergedProblems = uniqueStrings(problems);
   return {
     ok: mergedProblems.length === 0,
@@ -199,6 +206,7 @@ export function loadContext({
     entry: discovery.entry,
     entryHow: discovery.entryHow,
     sources: discovery.sources,
+    pages,
     idf,
     lvgl,
     display,

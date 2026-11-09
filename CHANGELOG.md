@@ -2,6 +2,11 @@
 
 All notable changes to lvglui are documented here.
 
+## Unreleased
+
+- 多页渲染：实现 `ui_page_count`/`ui_page_name`/`ui_page_show` 的界面可用 `render --all-pages` 逐页出图并拼 `shot-sheet.png` 总览，或用 `--page <name>` 单页渲染；MCP 的 `render_ui` 增加 `page`/`allPages`。没有契约的工程行为不变。
+- `init` 模板新增 `include/ui_pages.h` 与 `src/ui_pages.c`（默认一页 `home`）。
+
 ## [1.0.0-rc.1] - 2026-11-09
 
 First release candidate. The tool is feature-complete for the documented

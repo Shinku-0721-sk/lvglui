@@ -39,6 +39,17 @@ UI_EXPORT void ui_detach(void);
  * pixels and never triggers a refresh; a failed open is a silent no-op. */
 UI_EXPORT void ui_dump_tree(const char *path);
 
+/* ---- optional multi-page contract (host side) ---------------------------
+ * A UI component may define ui_page_count / ui_page_name / ui_page_show;
+ * CMake then compiles the host with LVGLUI_HAS_PAGES. These wrappers always
+ * exist: without the contract they report 0 pages and refuse to switch, so
+ * a single-entry project keeps working unchanged.
+ */
+UI_EXPORT int         ui_page_total(void);
+UI_EXPORT const char *ui_page_name_at(int index);
+/* Select the page the next ui_attach builds. -1 means "use LVGLUI_ENTRY". */
+UI_EXPORT int         ui_set_page(int index);
+
 #ifdef __cplusplus
 }
 #endif

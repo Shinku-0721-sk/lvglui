@@ -71,6 +71,14 @@ const TOOLS = [
         frames: { type: 'number', description: '截图前跑几帧（默认 12 × 33ms）' },
         rebuild: { type: 'boolean', description: '渲染前先编译（默认 true）' },
         outDir: { type: 'string', description: '输出目录（默认工程的 .lvglui/out）' },
+        page: {
+          type: 'string',
+          description: '只渲染某一页（界面需实现 ui_page_count/ui_page_name/ui_page_show）',
+        },
+        allPages: {
+          type: 'boolean',
+          description: '渲染所有页，返回 contact sheet 总览图；每页单独的 PNG 也在 meta.pages 里',
+        },
       },
       additionalProperties: false,
     },
@@ -188,6 +196,8 @@ async function callTool(name, args = {}) {
       frames: args.frames,
       rebuild: args.rebuild !== false,
       outDir: args.outDir,
+      page: args.page,
+      allPages: args.allPages === true,
     });
     if (!r.ok) {
       return toolResult(
@@ -216,6 +226,9 @@ async function callTool(name, args = {}) {
           treePath: r.treePath,
           metaPath: r.metaPath,
           names: r.names,
+          page: r.page ?? null,
+          pages: r.pages ?? [],
+          sheet: r.meta?.sheet ?? null,
           meta: r.meta,
           tree: r.tree,
           diagnostics: r.diagnostics,

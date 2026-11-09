@@ -37,7 +37,7 @@ const COMMANDS = new Set([
   'help',
 ]);
 
-const VALUE_FLAGS = new Set(['project', 'width', 'height', 'frames', 'out', 'port', 'preset', 'size', 'chars', 'name', 'font', 'dynamic', 'fs-path', 'freetype-dir']);
+const VALUE_FLAGS = new Set(['project', 'width', 'height', 'frames', 'out', 'port', 'preset', 'size', 'chars', 'name', 'font', 'dynamic', 'fs-path', 'freetype-dir', 'page']);
 const NUMBER_FLAGS = new Set(['width', 'height', 'frames', 'port', 'size']);
 const KNOWN_FLAGS = new Set([
   'project',
@@ -58,6 +58,8 @@ const KNOWN_FLAGS = new Set([
   'dynamic',
   'fsPath',
   'freetypeDir',
+  'page',
+  'allPages',
   'help',
 ]);
 
@@ -90,6 +92,8 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   --frames <n>      渲染帧数（默认 12）
   --out <dir>       渲染输出目录（默认 <project>/.lvglui/out）
   --no-build        渲染时跳过编译，直接复用已有 shot.exe
+  --page <name>     只渲染某一页（需要界面实现 ui_page_* 契约）
+  --all-pages       渲染所有页，另出一张 shot-sheet.png 总览
   --json            render / build / doctor 只向 stdout 输出结果 JSON，日志走 stderr
   --force           init 兼容参数（v1 不覆盖已有文件）
   --no-render       init 后不做空白页渲染
@@ -327,6 +331,15 @@ function validationProblem(command, flags, positionals) {
     && (!isPositiveInteger(flags.port) || flags.port > PORT_MAX)) {
     return `--port 必须是 1..${PORT_MAX} 的整数`;
   }
+  if (flags.page !== undefined && flags.allPages !== undefined) {
+    return '--page 与 --all-pages 不能同时使用';
+  }
+  if (flags.page !== undefined && typeof flags.page !== 'string') {
+    return '--page 需要一个页名';
+  }
+  if ((flags.page !== undefined || flags.allPages !== undefined) && command !== 'render') {
+    return '--page / --all-pages 只用于 render';
+  }
   return null;
 }
 
@@ -334,10 +347,21 @@ async function runRender(flags) {
   const ctx = loadFor('render', flags);
   if (!ctx.ok) return reportContextFailure(ctx, flags.json);
 
+  if (flags.page !== undefined || flags.allPages !== undefined) {
+    if (ctx.pages?.supported !== true) {
+      const message = '界面没有实现 ui_page_* 契约（ui_page_count / ui_page_name / ui_page_show），无法按页渲染';
+      console.error(`[lvglui] ${message}`);
+      if (flags.json) writeJson({ ok: false, stage: 'pages', message });
+      return 2;
+    }
+  }
+
   const result = renderProject(ctx, {
     frames: flags.frames,
     rebuild: flags.noBuild !== true,
     outDir: flags.out,
+    page: flags.page,
+    allPages: flags.allPages === true,
   });
   const value = renderResult(result);
 
@@ -345,7 +369,9 @@ async function runRender(flags) {
     writeJson(value);
     if (!result.ok) reportRenderFailure(result);
   } else if (result.ok) {
-    console.log(`[lvglui] png=${result.pngPath} meta=${result.metaPath} tree=${result.treePath}`);
+    const pageCount = Array.isArray(result.pages) ? result.pages.length : 0;
+    const suffix = pageCount > 1 ? ` pages=${pageCount} sheet=${result.pngPath}` : '';
+    console.log(`[lvglui] png=${result.pngPath} meta=${result.metaPath} tree=${result.treePath}${suffix}`);
   } else {
     reportRenderFailure(result);
   }

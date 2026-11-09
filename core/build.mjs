@@ -21,6 +21,7 @@ const CMakeEntries = [
   ['LVGLUI_FREETYPE', 'freetype', 'BOOL'],
   ['LVGLUI_FREETYPE_DIR', 'freetypeDir', 'PATH'],
   ['LVGLUI_FONT_PATH', 'fontPath', 'FILEPATH'],
+  ['LVGLUI_HAS_PAGES', 'hasPages', 'BOOL'],
 ];
 
 function isPlainObject(value) {
@@ -78,6 +79,10 @@ function readCtx(ctx) {
   if (fontPath !== '' && (fontPath.includes('"') || fontPath.includes('\r') || fontPath.includes('\n'))) {
     throw new Error('writeBuildScript: invalid font.file');
   }
+  // Optional page contract: ctx.pages comes from loadContext's static scan.
+  // Compiling the host with LVGLUI_HAS_PAGES is what lets ui_entry.c call the
+  // three ui_page_* symbols; without it they are simply not referenced.
+  const hasPages = ctx.pages?.supported === true;
 
   return {
     toolDir,
@@ -92,6 +97,7 @@ function readCtx(ctx) {
     freetype,
     freetypeDir,
     fontPath,
+    hasPages,
     vcvars,
     cmake,
     ninja,
@@ -149,6 +155,7 @@ function renderCache(values, buildDir) {
     freetype: values.freetype ? 'ON' : 'OFF',
     freetypeDir: values.freetypeDir,
     fontPath: values.fontPath,
+    hasPages: values.hasPages ? 'ON' : 'OFF',
   };
   const lines = CMakeEntries.map(([name, key, type]) => (
     `set(${name} ${cmakeQuote(mapped[key], key)} CACHE ${type} "")`
@@ -233,7 +240,8 @@ function clearStaleCmakeCache(buildDir, values) {
     (value('LVGLUI_ENTRY') !== null && value('LVGLUI_ENTRY') !== values.entry) ||
     (value('LVGLUI_FONT_NAME') !== null && value('LVGLUI_FONT_NAME') !== values.fontName) ||
     (value('LVGLUI_FREETYPE') !== null && value('LVGLUI_FREETYPE') !== (values.freetype ? 'ON' : 'OFF')) ||
-    (value('LVGLUI_FREETYPE_DIR') !== null && value('LVGLUI_FREETYPE_DIR') !== values.freetypeDir);
+    (value('LVGLUI_FREETYPE_DIR') !== null && value('LVGLUI_FREETYPE_DIR') !== values.freetypeDir) ||
+    (value('LVGLUI_HAS_PAGES') !== null && value('LVGLUI_HAS_PAGES') !== (values.hasPages ? 'ON' : 'OFF'));
 
   if (!stale) return;
 
