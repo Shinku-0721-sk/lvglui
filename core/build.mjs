@@ -217,7 +217,11 @@ function clearStaleCmakeCache(buildDir, toolDir) {
   const match = text.match(/^CMAKE_HOME_DIRECTORY:INTERNAL=(.+)$/m);
   if (!match) return;
   if (path.resolve(match[1].trim()) === path.resolve(toolDir)) return;
-  fs.rmSync(buildDir, { recursive: true, force: true });
+  // Keep lv_conf.h (written by renderProject before buildHost) and the build
+  // log; only remove CMake/Ninja state so CMake reconfigures from this checkout.
+  for (const name of ['CMakeCache.txt', 'CMakeFiles', 'build.ninja', '.ninja_deps', '.ninja_log', 'cmake_install.cmake']) {
+    fs.rmSync(path.join(buildDir, name), { recursive: true, force: true });
+  }
 }
 
 /**

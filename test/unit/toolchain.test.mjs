@@ -576,10 +576,12 @@ test('clears a CMake cache produced by a different tool checkout', (t) => {
     path.join(buildDir, 'CMakeCache.txt'),
     'CMAKE_HOME_DIRECTORY:INTERNAL=D:/other/lvglui\n',
   );
+  fs.writeFileSync(path.join(buildDir, 'lv_conf.h'), '/* keep */\n');
 
   const r = writeBuildScript(planCtx(buildDir));
 
   assert.equal(fs.existsSync(path.join(buildDir, 'CMakeCache.txt')), false);
+  assert.equal(fs.readFileSync(path.join(buildDir, 'lv_conf.h'), 'utf8'), '/* keep */\n');
   assert.equal(fs.existsSync(r.script), true);
   assert.equal(fs.existsSync(r.cacheScript), true);
 });
