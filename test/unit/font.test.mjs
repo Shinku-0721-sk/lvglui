@@ -99,7 +99,7 @@ test('fontAdd writes a fake font, header, apply hook, theme, CMake and config', 
   const { root, uiDir, ctx } = fixture();
   const fake = (args) => {
     const output = args[args.indexOf('--output') + 1];
-    fs.writeFileSync(output, '/* U+4FDD "保" */\n/* U+5B58 "存" */\nconst lv_font_t ui_font_noto_sc_16 = {0};\n', 'utf8');
+    fs.writeFileSync(output, '#include \"lvgl/lvgl.h\"\n/* U+4FDD "保" */\n/* U+5B58 "存" */\nconst lv_font_t ui_font_noto_sc_16 = {0};\n', 'utf8');
     return { status: 0, stdout: '', stderr: '' };
   };
   const result = fontAdd(ctx, { preset: FONT_PRESET, size: 16, run: fake });
@@ -111,6 +111,9 @@ test('fontAdd writes a fake font, header, apply hook, theme, CMake and config', 
 
   const fontFile = path.join(uiDir, 'fonts', 'ui_font_noto_sc_16.c');
   assert.ok(fs.existsSync(fontFile));
+  const fontSource = fs.readFileSync(fontFile, 'utf8');
+  assert.match(fontSource, /#include "lvgl\.h"/);
+  assert.doesNotMatch(fontSource, /lvgl\/lvgl\.h/);
   const header = fs.readFileSync(path.join(uiDir, 'include', 'ui_font.h'), 'utf8');
   assert.match(header, /LV_FONT_DECLARE\(ui_font_noto_sc_16\)/);
   assert.match(header, /void lvglui_apply_font\(lv_obj_t \*root\)/);

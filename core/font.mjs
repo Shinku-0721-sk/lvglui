@@ -553,6 +553,9 @@ export function fontAdd(ctx, options = {}) {
     return fontFailure(`字体转换失败${detail ? `: ${detail}` : ''}`);
   }
 
+  let fontText = fs.readFileSync(cfile, 'utf8');
+  fontText = fontText.replace(/#include "lvgl\/lvgl\.h"/, '#include "lvgl.h"');
+  fs.writeFileSync(cfile, fontText, 'utf8');
   const glyphs = parseCodepoints(cfile);
   const requested = new Set(clean.map((ch) => ch.codePointAt(0)));
   const missing = [...requested].filter((cp) => !glyphs.has(cp)).sort((a, b) => a - b);
