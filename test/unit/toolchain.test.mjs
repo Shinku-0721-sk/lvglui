@@ -568,3 +568,18 @@ test('buildHost never throws on invalid ctx and reports the validation error', (
   assert.match(r.stderr, /display/i);
   assert.equal(r.logPath, null);
 });
+
+test('clears a CMake cache produced by a different tool checkout', (t) => {
+  const buildDir = tempDir(t, 'lvglui-stale-');
+  fs.mkdirSync(buildDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(buildDir, 'CMakeCache.txt'),
+    'CMAKE_HOME_DIRECTORY:INTERNAL=D:/other/lvglui\n',
+  );
+
+  const r = writeBuildScript(planCtx(buildDir));
+
+  assert.equal(fs.existsSync(path.join(buildDir, 'CMakeCache.txt')), false);
+  assert.equal(fs.existsSync(r.script), true);
+  assert.equal(fs.existsSync(r.cacheScript), true);
+});

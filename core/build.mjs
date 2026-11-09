@@ -2,6 +2,7 @@
 // targets (ui, shot, preview), then run it and capture a build log.
 
 import path from 'node:path';
+import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { writeIfChanged } from './fsutil.mjs';
 
@@ -199,10 +200,24 @@ export function writeBuildScript(ctx) {
   const cacheScript = path.join(values.buildDir, 'lvglui.cmake');
   const script = path.join(values.buildDir, 'build.cmd');
 
+  clearStaleCmakeCache(values.buildDir, values.toolDir);
   writeIfChanged(cacheScript, renderCache(values, values.buildDir));
   writeIfChanged(script, renderScript(values, values.buildDir, cacheScript));
 
   return { script, cacheScript };
+}
+
+// A checkout moved or cloned keeps the same relative .lvglui/build path, but
+// CMakeCache.txt records the old tool source directory. CMake then refuses to
+// reuse the cache, so clear the generated directory before reconfiguring.
+function clearStaleCmakeCache(buildDir, toolDir) {
+  const cacheFile = path.join(buildDir, 'CMakeCache.txt');
+  if (!fs.existsSync(cacheFile)) return;
+  const text = fs.readFileSync(cacheFile, 'utf8');
+  const match = text.match(/^CMAKE_HOME_DIRECTORY:INTERNAL=(.+)$/m);
+  if (!match) return;
+  if (path.resolve(match[1].trim()) === path.resolve(toolDir)) return;
+  fs.rmSync(buildDir, { recursive: true, force: true });
 }
 
 /**
