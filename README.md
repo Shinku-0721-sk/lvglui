@@ -257,7 +257,7 @@ skill 的约束是文字约定：只改 `uiDir`、不改 `main`/BSP/`sdkconfig`/
 
 ## 限制
 
-- 只做**静态**渲染 + 控件树；不做点击/滑动/动画模拟
+- 只做**静态**渲染 + 控件树；点击/滑动/动画模拟不在 1.x 范围内，留到 2.0
 - 只支持 **16bit** 色深
 - Windows + ESP-IDF 6.x + LVGL 9.x
 - 不拉 LVGL 组件、不配 component manager、不搭显示/触摸 BSP

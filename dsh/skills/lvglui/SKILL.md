@@ -42,7 +42,7 @@ description: 在 ESP-IDF 6.x + LVGL 9.x 工程里编写或调整 UI 页面：用
 - 业务数据/命令只通过 `ui_port.h` 的 `ui_port_*` 函数。UI 不直接读传感器、不写 NVS、不建任务、不调 `vTaskDelay`。
 - `ui_port_stub.c` 是 host 预览用的桩，全部包在 `#ifdef LVGLUI_HOST` 里；固件里是空 TU。用户在 `main/ui_port_impl.c` 实现强符号。
 - 不改 `main/`、BSP、`sdkconfig`、工程级 `CMakeLists.txt`、`managed_components/`。
-- 不做点击/滑动/动画的交互模拟；v1 只验证静态布局和初始数据。
+- 不做点击/滑动/动画的交互模拟；1.x 只验证静态布局和初始数据（交互注入排在 2.0）。用户若要求验证点击后的状态，说明做不到，并改成建议用回调逻辑走查或上板自测。
 - 不拉 LVGL 组件、不搭显示/触摸 bridge；这些是用户的前置工作。
 - **不烧录、不碰串口**：禁止运行 `idf.py flash/monitor/erase-flash`、`esptool`、任何串口读写或 eFuse/分区表/bootloader 操作；工具本身也没有 `flash` 命令。用户要求烧板时，说明这是人工步骤：给出编译产物和 `idf.py -p <PORT> flash` 命令，由用户自己执行。原因：烧录本身可恢复，但未验证的业务逻辑可能驱动执行器（电机/加热/继电器），风险由固件内容决定，须由人把关。
 
