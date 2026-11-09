@@ -169,8 +169,10 @@ export function previewProject(ctx, options = {}) {
   try {
     child = spawn(exe, args, {
       cwd: buildDir,
-      detached: false,
-      stdio: 'inherit',
+      // The preview window must outlive the CLI process that launched it;
+      // otherwise the terminal closing the console takes the window with it.
+      detached: true,
+      stdio: 'ignore',
     });
   } catch (e) {
     return failure('spawn', `cannot start ${exe}: ${e.message}`, args);
@@ -185,6 +187,7 @@ export function previewProject(ctx, options = {}) {
   if (typeof child.pid !== 'number') {
     return failure('spawn', `cannot start ${exe}`, args);
   }
+  child.unref();
 
   return { ok: true, pid: child.pid, args, error: null };
 }

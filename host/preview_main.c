@@ -571,6 +571,19 @@ int wmain(int argc, wchar_t **argv)
         return 1;
     }
     ShowWindow(g_hwnd, SW_SHOW);
+    {
+        RECT work, wr;
+        int ww, wh, x, y;
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+        GetWindowRect(g_hwnd, &wr);
+        ww = wr.right - wr.left;
+        wh = wr.bottom - wr.top;
+        x = work.left + (work.right - work.left - ww) / 2;
+        y = work.top + (work.bottom - work.top - wh) / 2;
+        SetWindowPos(g_hwnd, HWND_TOP, x, y, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+    }
+    SetForegroundWindow(g_hwnd);
+    BringWindowToTop(g_hwnd);
 
     src_fingerprint(g_fp, sizeof(g_fp));
     if(load_ui() != 0) {
