@@ -245,6 +245,8 @@ skill 的约束是文字约定：只改 `uiDir`、不改 `main`/BSP/`sdkconfig`/
 - [Shinku_721](https://gitee.com/shinku_721) — 项目所有者、需求与验收
 - **DeepSeek** — AI 编程协作：架构、实现、测试、文档与发布工程
 
+  <img src="assets/contributors/deepseek.png" alt="DeepSeek avatar" width="72" />
+
 完整名单见 [`CONTRIBUTORS.md`](CONTRIBUTORS.md)。
 
 ## 许可证
