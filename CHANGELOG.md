@@ -34,6 +34,12 @@ until a clean-machine install and public CI run are confirmed.
 - The old `build.bat` / `build-cli.bat` scripts were removed in favor of
   generated, path-safe build scripts.
 
+### Fixed
+
+- Reusing a shared `.lvglui/build` directory after moving or cloning the tool
+  no longer fails with a CMake source-directory mismatch; stale CMake/Ninja
+  state is cleared while `lv_conf.h` is preserved.
+
 ### Security / licensing
 
 - lvglui itself is AGPL-3.0-or-later.
