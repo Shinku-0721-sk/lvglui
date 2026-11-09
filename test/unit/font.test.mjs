@@ -6,12 +6,14 @@ import path from 'node:path';
 
 import {
   BUNDLED_FONT,
+  COMMON_FONT,
   FONT_PRESET,
   collectUiCharacters,
   fontAdd,
   fontOff,
   fontStatus,
   previewOverrides,
+  readCommonCharacters,
 } from '../../core/font.mjs';
 
 const TOOL_DIR = path.resolve(import.meta.dirname, '../..');
@@ -57,6 +59,40 @@ test('collectUiCharacters keeps Chinese and printable ASCII', () => {
   assert.ok(result.chars.includes('保'));
   assert.ok(result.chars.includes('存'));
   assert.ok(result.chars.includes('O'));
+});
+
+test('readCommonCharacters returns the GB2312 level-1 set', () => {
+  const chars = readCommonCharacters(TOOL_DIR);
+  assert.equal(chars.length, 3755);
+  assert.equal(new Set(chars).size, 3755);
+  assert.ok(chars.includes('你'));
+  assert.ok(chars.includes('好'));
+  assert.ok(chars.every((ch) => /^[\u4e00-\u9fff]$/.test(ch)));
+  assert.ok(fs.statSync(path.join(TOOL_DIR, COMMON_FONT)).size > 0);
+});
+
+test('fontAdd dynamic common uses the common set and a distinct symbol', () => {
+  const { root, uiDir, ctx } = fixture({ withTheme: false });
+  let captured = [];
+  const fake = (args) => {
+    captured = args;
+    fs.writeFileSync(args[args.indexOf('--output') + 1], '/* U+4FDD */\n', 'utf8');
+    return { status: 0 };
+  };
+  const result = fontAdd(ctx, { preset: FONT_PRESET, size: 16, dynamic: 'common', run: fake });
+  assert.equal(result.ok, true, JSON.stringify(result.problems));
+  assert.equal(result.dynamic, 'common');
+  assert.equal(result.symbol, 'ui_font_noto_sc_16_common');
+  assert.ok(result.chars > 3755);
+  const symbols = captured[captured.indexOf('--symbols') + 1];
+  assert.ok(symbols.includes('你'));
+  assert.ok(symbols.includes('好'));
+  assert.ok(symbols.length > 3000);
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'lvglui.json'), 'utf8'));
+  assert.equal(config.font.dynamic, 'common');
+  assert.equal(config.font.name, 'ui_font_noto_sc_16_common');
+  const status = fontStatus({ ...ctx, config: result.config });
+  assert.equal(status.dynamic, 'common');
 });
 
 test('fontAdd writes a fake font, header, apply hook, theme, CMake and config', () => {
@@ -126,6 +162,7 @@ test('fontAdd cleans files from a previous add and fontOff removes them all', ()
   const off = fontOff(ctx);
   assert.equal(off.ok, true);
   assert.equal(fs.existsSync(path.join(uiDir, 'fonts', 'ui_font_noto_sc_18.c')), false);
+  assert.equal(fs.existsSync(path.join(uiDir, 'fonts')), false);
   assert.equal(fs.existsSync(path.join(uiDir, 'include', 'ui_font.h')), false);
   assert.equal(fs.existsSync(path.join(uiDir, 'src', 'ui_font_apply.c')), false);
   assert.doesNotMatch(fs.readFileSync(path.join(uiDir, 'CMakeLists.txt'), 'utf8'), /ui_font_/);

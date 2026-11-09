@@ -18,7 +18,7 @@ const DEFAULTS = {
   entry: '',
   display: null,
   build: { dir: '.lvglui/build', cmake: '', ninja: '', vcvars: '' },
-  font: { mode: 'off', file: '', size: 16, name: '', cjk: false },
+  font: { mode: 'off', dynamic: 'labels', file: '', size: 16, name: '', cjk: false },
 };
 
 function isPlainObject(value) {
@@ -171,6 +171,11 @@ export function normalizeConfig(data, root) {
       font.mode = 'off';
     }
     font.file = stringField(raw.file, '', 'font.file', problems);
+    font.dynamic = raw.dynamic === undefined ? 'labels' : raw.dynamic;
+    if (!['labels', 'common'].includes(font.dynamic)) {
+      problems.push(`font.dynamic must be labels or common, got ${JSON.stringify(font.dynamic)}`);
+      font.dynamic = 'labels';
+    }
     if (font.mode === 'project') {
       if (font.file === '') problems.push('font.file is required when font.mode is project');
       else {

@@ -28,7 +28,7 @@ description: 在 ESP-IDF 6.x + LVGL 9.x 工程里编写或调整 UI 页面：用
 3. 只改 `<uiDir>/**`。新增页面放在 `<uiDir>/src/pages/<name>.c`，在 `ui.c` 里挂载。
 4. 布局用 flex/grid；尺寸用 `lv_pct` 或相对常量；不要写死与屏幕分辨率无关的像素；屏幕尺寸以 `ctx.display`/`lvglui.json` 为准。
 5. 每个业务要读/改的控件用 `lv_obj_set_name()` 起名（契约）；名字用英文 snake_case，如 `val_temp`、`btn_save`。
-6. 中文文本不要依赖 LVGL 自带的 CJK 子集；让用户先运行 `lvglui font add --preset noto-sans-sc --size 16` 生成工程字体（默认 `font.mode=off`）。UI 页面里的中文照常写，预览/固件共用；缺字看 `font status`。不要在 UI 里 include 字体源文件。
+6. 中文文本不要依赖 LVGL 自带的 CJK 子集；让用户先运行 `lvglui font add --preset noto-sans-sc --size 16` 生成工程字体（默认 `font.mode=off`）；动态中文（设备名/用户输入）用 `--dynamic common`。UI 页面里的中文照常写，预览/固件共用；缺字看 `font status`。不要在 UI 里 include 字体源文件。
 7. 调 `mcp__lvglui__render_ui`（第一次 `rebuild:true`，之后可 `rebuild:false`），看返回的 `image` 和 `tree`：
    - `tree` 的 `name/cls/x/y/w/h/text/value` 用来核对布局和文字；
    - 图片用来看溢出、对齐、颜色、中文是否正确；

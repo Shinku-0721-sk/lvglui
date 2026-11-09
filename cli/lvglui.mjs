@@ -37,7 +37,7 @@ const COMMANDS = new Set([
   'help',
 ]);
 
-const VALUE_FLAGS = new Set(['project', 'width', 'height', 'frames', 'out', 'port', 'preset', 'size', 'chars', 'name', 'font']);
+const VALUE_FLAGS = new Set(['project', 'width', 'height', 'frames', 'out', 'port', 'preset', 'size', 'chars', 'name', 'font', 'dynamic']);
 const NUMBER_FLAGS = new Set(['width', 'height', 'frames', 'port', 'size']);
 const KNOWN_FLAGS = new Set([
   'project',
@@ -55,6 +55,7 @@ const KNOWN_FLAGS = new Set([
   'chars',
   'name',
   'font',
+  'dynamic',
   'help',
 ]);
 
@@ -94,6 +95,7 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   --preset <name>   font add 字体预设（noto-sans-sc）
   --size <n>        font add 字号（8..64，默认 16）
   --chars <text>    font add 额外字符
+  --dynamic <mode>  font add 字符集：labels（默认）或 common（GB2312 一级 3755 常用字）
   --name <id>       font add 生成的 C 符号名
   --font <path>     font add 自定义 TTF/OTF（与 --preset 二选一）
 
@@ -868,6 +870,7 @@ async function runFont(command, flags, positionals) {
       size: flags.size,
       chars: flags.chars,
       name: flags.name,
+      dynamic: flags.dynamic,
     });
   } else if (command === 'font off') {
     result = fontOff(ctx);
@@ -888,7 +891,7 @@ async function runFont(command, flags, positionals) {
   }
 
   if (command === 'font add') {
-    console.log(`[lvglui] font ${result.mode}: ${result.file} (${result.chars} chars, ${result.glyphs} glyphs)`);
+    console.log(`[lvglui] font ${result.mode}/${result.dynamic ?? 'labels'}: ${result.file} (${result.chars} chars, ${result.glyphs} glyphs)`);
     if ((result.missing ?? []).length > 0) {
       console.log(`[lvglui] 缺字: ${result.missing.map((cp) => `U+${cp.toString(16).toUpperCase()}`).join(', ')}`);
     }
@@ -896,7 +899,7 @@ async function runFont(command, flags, positionals) {
     console.log(`[lvglui] font off; 移除 ${result.removed.length} 个文件`);
     for (const file of result.removed) console.log(`  - ${file}`);
   } else {
-    console.log(`[lvglui] font mode=${result.mode} chars=${result.chars} glyphs=${result.glyphs} file=${result.file || '(none)'}`);
+    console.log(`[lvglui] font mode=${result.mode} dynamic=${result.dynamic ?? 'labels'} chars=${result.chars} glyphs=${result.glyphs} file=${result.file || '(none)'}`);
   }
   for (const warning of result.warnings ?? []) console.error(`[lvglui] warning: ${warning}`);
   return 0;

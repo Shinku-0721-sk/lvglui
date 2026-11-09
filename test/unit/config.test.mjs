@@ -99,6 +99,6 @@ test('null uiDir/build/font are problems but display:null is a default', () => {
   assert.match(r.problems.join(' '), /font must be an object/);
   assert.equal(r.config.uiDir, '');
   assert.equal(r.config.build.dir, '.lvglui/build');
-  assert.deepEqual(r.config.font, { mode: 'off', file: '', size: 16, name: '', cjk: false });
+  assert.deepEqual(r.config.font, { mode: 'off', dynamic: 'labels', file: '', size: 16, name: '', cjk: false });
   assert.equal(normalizeConfig({ display: null }, 'D:/proj').ok, true);
 });

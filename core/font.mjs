@@ -14,8 +14,10 @@ import { writeConfig } from './config.mjs';
 
 export const FONT_PRESET = 'noto-sans-sc';
 export const BUNDLED_FONT = 'assets/fonts/NotoSansSC-Regular.ttf';
+export const COMMON_FONT = 'assets/fonts/common-gb2312-level1.txt';
 export const FONT_SIZE_MIN = 8;
 export const FONT_SIZE_MAX = 64;
+export const FONT_DYNAMICS = ['labels', 'common'];
 const FONT_DIR = 'fonts';
 const HEADER_NAME = 'ui_font.h';
 const MAX_SYMBOLS = 20000;
@@ -41,6 +43,29 @@ function asciiChars() {
   const chars = [];
   for (let code = 0x20; code <= 0x7e; code++) chars.push(String.fromCharCode(code));
   return chars;
+}
+
+/**
+ * Read the bundled GB2312 level-1 character set (3755 common Hanzi). The
+ * file is plain text; whitespace is only layout. Keeping the list as data
+ * makes the generated font deterministic and lets users inspect it.
+ *
+ * @param {string} toolDir tool checkout root
+ * @returns {string[]}
+ */
+export function readCommonCharacters(toolDir) {
+  const file = path.join(toolDir, COMMON_FONT);
+  if (!fs.existsSync(file)) throw new Error(`常用字库不存在: ${file}`);
+  const source = fs.readFileSync(file, 'utf8');
+  const chars = [];
+  const seen = new Set();
+  for (const ch of source) {
+    const cp = ch.codePointAt(0);
+    if (cp < 0x4e00 || cp > 0x9fff || seen.has(ch)) continue;
+    seen.add(ch);
+    chars.push(ch);
+  }
+  return chars.sort((a, b) => a.codePointAt(0) - b.codePointAt(0));
 }
 
 // Decode the handful of C escapes that matter for labels. Unknown escapes keep
@@ -279,6 +304,11 @@ function removeGeneratedArtifacts(uiDir) {
       drop(abs);
       fs.rmSync(abs, { force: true });
     }
+    try {
+      if (fs.readdirSync(fontsDir).length === 0) fs.rmdirSync(fontsDir);
+    } catch {
+      // A user may have put a non-generated file here; keep the directory.
+    }
   }
 
   const applyPath = path.join(uiDir, 'src', 'ui_font_apply.c');
@@ -330,6 +360,11 @@ export function fontAdd(ctx, options = {}) {
     return fontFailure(`字体大小必须是 ${FONT_SIZE_MIN}..${FONT_SIZE_MAX} 的整数`);
   }
 
+  const dynamic = text(options.dynamic) === '' ? 'labels' : options.dynamic;
+  if (!FONT_DYNAMICS.includes(dynamic)) {
+    return fontFailure(`不支持的字体模式: ${dynamic}`);
+  }
+
   const preset = options.preset ?? '';
   let sourceFont;
   if (text(options.fontPath) !== '') {
@@ -354,11 +389,18 @@ export function fontAdd(ctx, options = {}) {
 
   const ui = collectUiCharacters(uiDir);
   const symbols = new Set([...asciiChars(), ...ui.chars]);
+  if (dynamic === 'common') {
+    try {
+      for (const ch of readCommonCharacters(ctx.toolDir)) symbols.add(ch);
+    } catch (e) {
+      return fontFailure(e.message);
+    }
+  }
   for (const ch of text(options.chars)) symbols.add(ch);
   const clean = [...symbols].filter((ch) => {
     const cp = ch.codePointAt(0);
     return cp !== undefined && cp >= 0x20 && cp !== 0x7f;
-  });
+  }).sort((a, b) => a.codePointAt(0) - b.codePointAt(0));
   if (clean.length === 0) return fontFailure('没有可生成的字符');
   if (clean.length > MAX_SYMBOLS) {
     return fontFailure(`需要生成的字符太多（${clean.length} > ${MAX_SYMBOLS}），请用 --chars 缩小范围`);
@@ -366,7 +408,7 @@ export function fontAdd(ctx, options = {}) {
 
   const suggested = text(options.name) !== ''
     ? options.name
-    : `ui_font_${text(options.fontPath) === '' ? 'noto_sc' : 'custom'}_${size}`;
+    : `ui_font_${text(options.fontPath) === '' ? 'noto_sc' : 'custom'}_${size}${dynamic === 'common' ? '_common' : ''}`;
   if (!/^[A-Za-z_]\w*$/.test(suggested)) return fontFailure(`字体符号名不合法: ${suggested}`);
 
   const fontsDir = path.join(uiDir, FONT_DIR);
@@ -445,13 +487,14 @@ export function fontAdd(ctx, options = {}) {
   const relFile = toPosix(path.relative(root, cfile));
   const nextConfig = {
     ...ctx.config,
-    font: { mode: 'project', file: relFile, size, name: suggested, cjk: false },
+    font: { mode: 'project', dynamic, file: relFile, size, name: suggested, cjk: false },
   };
   writeConfig(root, nextConfig);
 
   return {
     ok: true,
     mode: 'project',
+    dynamic,
     file: relFile,
     symbol: suggested,
     size,
@@ -479,7 +522,7 @@ export function fontOff(ctx) {
 
   const nextConfig = {
     ...ctx.config,
-    font: { mode: 'off', file: '', size: ctx.config?.font?.size ?? 16, name: '', cjk: false },
+    font: { mode: 'off', dynamic: 'labels', file: '', size: ctx.config?.font?.size ?? 16, name: '', cjk: false },
   };
   writeConfig(root, nextConfig);
   return { ok: true, removed, problems, config: nextConfig };
@@ -502,6 +545,7 @@ export function fontStatus(ctx) {
   const result = {
     ok: true,
     mode,
+    dynamic: font.dynamic ?? 'labels',
     size: font.size ?? 16,
     file: text(font.file),
     symbol: text(font.name),

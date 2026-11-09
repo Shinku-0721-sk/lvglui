@@ -72,6 +72,7 @@ test/                node:test 单测 + 集成测试
 - `entry` 是 UI 入口函数，默认 `ui_start`
 - `colorDepth` 目前只接受 `16`
 - `font.mode` 默认 `off`：不启用中文字体；`project` 用工程生成的子集；`cjk` 是 LVGL 自带 CJK 子集（覆盖不全，仅兼容旧配置）
+- `font.dynamic` 默认 `labels`：只生成 UI 字符串用到的字符；`common` 生成 GB2312 一级 3755 常用字 + UI 字符 + ASCII，适合动态中文
 - `font.mode == "project"` 时，`font.file`/`font.size`/`font.name` 由 `font add` 写入；不要手改
 - `build.dir` 只能指向工程内；默认 `.lvglui/build`
 
@@ -105,15 +106,23 @@ void  ui_port_set_relay(bool on);
 默认不启用中文字体。需要时运行：
 
 ```bash
+# 固定文案：只生成 UI 里出现的字符
 lvglui font add --project D:/my_project --preset noto-sans-sc --size 16
+
+# 动态中文：生成 3755 个 GB2312 一级常用字 + UI 字符 + ASCII
+lvglui font add --project D:/my_project --preset noto-sans-sc --dynamic common --size 16
+
 lvglui font status --project D:/my_project
 lvglui font off --project D:/my_project
 ```
 
-`font add` 会扫描 `uiDir` 里的 C 字符串字面量，用工具自带的 Noto Sans SC 只生成这些字符的子集：
+`labels` 模式生成的文件最小、字形最好；`common` 模式覆盖常用中文，适合状态文字、设备名、用户输入等运行时才确定的文本。16px 4bpp 的 common 字体 C 文件约 3 MB，实际占用取决于链接器裁剪。
+
+`labels` 模式会扫描 `uiDir` 里的 C 字符串字面量，用工具自带的 Noto Sans SC 只生成这些字符的子集；`common` 模式会额外加入 GB2312 一级常用字：
 
 ```text
-components/app_ui/fonts/ui_font_noto_sc_16.c
+components/app_ui/fonts/ui_font_noto_sc_16.c       # labels
+components/app_ui/fonts/ui_font_noto_sc_16_common.c # common
 components/app_ui/include/ui_font.h
 ```
 
@@ -135,7 +144,7 @@ lvglui_apply_font(lv_screen_active());
 | `serve` | HTTP + SSE 预览（`127.0.0.1:8765`，占用自动 +1） |
 | `preview` | 打开实时窗口；保存→重编→换 `ui.dll`，失败保留旧画面 |
 | `init` | 注入 UI 组件骨架和 `lvglui.json` |
-| `font add` | 按 UI 字符串生成工程中文字体子集（`--preset noto-sans-sc`） |
+| `font add` | 生成工程字体：默认 labels 子集，`--dynamic common` 生成常用字大子集 |
 | `font off` | 移除工程字体、主题挂载和 CMake 条目 |
 | `font status` | 查看字体模式、字符数和缺字 |
 | `doctor` | 检查工程、IDF/LVGL 版本、工具链、显示配置、平台头 |
@@ -154,6 +163,7 @@ lvglui_apply_font(lv_screen_active());
 - `--preset noto-sans-sc`：`font add` 使用工具自带字体
 - `--size 8..64`：字体像素大小
 - `--chars "保存"`：额外加入字体的字符（仍会合并 UI 字符串）
+- `--dynamic labels|common`：`labels` 只收 UI 字符（默认）；`common` 加 GB2312 一级 3755 常用字
 - `--name ui_font_xxx`：生成字体符号名
 
 退出码：`0` 成功，`1` 构建/渲染失败，`2` 用法/配置错误，`3` 运行时/IO 错误。
