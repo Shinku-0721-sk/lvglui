@@ -16,6 +16,7 @@
  *   --build-dir <buildDir>              (build.cmd, build.log, ui_live_N.dll)
  *   --build-cmd <buildDir>/build.cmd
  *   --width N --height N
+ *   --topmost                           (optional; Ctrl+Alt+T toggles it)
  *   --watch <path>                      (optional, repeated)
  *
  * Builds run asynchronously: saving a file starts `cmd.exe /c ...` and the
@@ -73,6 +74,13 @@ static DWORD   g_build_started;
 static wchar_t g_pos_path[PATH_CAP];    /* <build-dir>\preview-window.txt    */
 static wchar_t g_dbg_path[PATH_CAP];    /* <build-dir>\preview-debug.log     */
 static int     g_debug;
+
+/* always-on-top: --topmost pins it from the start, Ctrl+Alt+T toggles it while
+ * the window is open, and the last state is remembered with the position. */
+static int     g_topmost;
+static int     g_topmost_forced;
+static int     g_hotkey_ok;
+static wchar_t g_title_state[128] = L"starting";
 
 static char g_fp[32];                  /* last fingerprint we reacted to   */
 static char g_build_fp[32];            /* sources the running build sees   */
@@ -147,21 +155,22 @@ static void save_window_pos(void)
     if(!GetWindowRect(g_hwnd, &r)) return;
     f = _wfopen(g_pos_path, L"w");
     if(!f) return;
-    fprintf(f, "%ld %ld\n", (long)r.left, (long)r.top);
+    fprintf(f, "%ld %ld %d\n", (long)r.left, (long)r.top, g_topmost);
     fclose(f);
 }
 
-static int load_window_pos(int *x, int *y)
+static int load_window_pos(int *x, int *y, int *topmost)
 {
     FILE *f;
     long a, b;
+    int t = 0;
     RECT work;
     POINT corner;
 
     if(!g_pos_path[0]) return -1;
     f = _wfopen(g_pos_path, L"r");
     if(!f) return -1;
-    if(fscanf(f, "%ld %ld", &a, &b) != 2) { fclose(f); return -1; }
+    if(fscanf(f, "%ld %ld %d", &a, &b, &t) < 2) { fclose(f); return -1; }
     fclose(f);
 
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
@@ -170,6 +179,7 @@ static int load_window_pos(int *x, int *y)
     if(!PtInRect(&work, corner)) return -1;
     *x = (int)a;
     *y = (int)b;
+    if(topmost) *topmost = t != 0;
     return 0;
 }
 
@@ -445,7 +455,7 @@ static void usage(void)
             "usage: preview.exe --dll <ui.dll> --build-cmd <build.cmd>\n"
             "                   [--project <root>] [--ui-dir <dir>] [--build-dir <dir>]\n"
             "                   [--cmake <exe>] [--vcvars <bat>]\n"
-            "                   [--width <n>] [--height <n>] [--watch <path>]...\n");
+            "                   [--width <n>] [--height <n>] [--topmost] [--watch <path>]...\n");
 }
 
 /* ---- fingerprint ----------------------------------------------------- */
@@ -551,9 +561,22 @@ static unsigned long long dll_stamp(void)
 /* ---- title ----------------------------------------------------------- */
 static void set_title(const wchar_t *state)
 {
-    wchar_t title[256];
-    swprintf(title, 256, L"LVGL Preview %dx%d  -  %ls  (Esc to quit)", g_w, g_h, state);
+    wchar_t title[320];
+    if(state) {
+        lstrcpynW(g_title_state, state, 128);
+    }
+    swprintf(title, 320, L"LVGL Preview %dx%d  -  %ls  (Esc to quit)%ls",
+             g_w, g_h, g_title_state, g_topmost ? L"  [topmost]" : L"");
     if(g_hwnd) SetWindowTextW(g_hwnd, title);
+}
+
+/* ---- always-on-top --------------------------------------------------- */
+static void apply_topmost(void)
+{
+    if(!g_hwnd) return;
+    SetWindowPos(g_hwnd, g_topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+                 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    set_title(NULL);
 }
 
 /* ---- DLL lifecycle --------------------------------------------------- */
@@ -831,6 +854,13 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case WM_KEYDOWN:
             if(wp == VK_ESCAPE) PostQuitMessage(0);
             return 0;
+        case WM_HOTKEY:
+            /* Ctrl+Alt+T: pin/unpin without restarting the preview. */
+            if(wp == 1) {
+                g_topmost = !g_topmost;
+                apply_topmost();
+            }
+            return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -889,6 +919,10 @@ static int parse_args(int argc, wchar_t **argv)
             value = _wtoi(argv[i]);
             if(value <= 0 || value > 10000) return 2;
             g_h = value;
+        }
+        else if(!wcscmp(a, L"--topmost")) {
+            g_topmost = 1;
+            g_topmost_forced = 1;
         }
         else if(!wcscmp(a, L"--watch")) {
             if(++i >= argc || g_watch_count >= MAX_WATCH) return 2;
@@ -961,21 +995,32 @@ int wmain(int argc, wchar_t **argv)
     {
         RECT work, wr;
         int ww, wh, x, y;
+        int remembered_topmost = 0;
         SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
         GetWindowRect(g_hwnd, &wr);
         ww = wr.right - wr.left;
         wh = wr.bottom - wr.top;
         /* Reopen where the user left it; only fall back to centering when
          * there is no remembered position (or it belongs to a monitor that
-         * is no longer there). */
-        if(load_window_pos(&x, &y) != 0) {
+         * is no longer there). The remembered pin state is only used when
+         * --topmost was not given on the command line. */
+        if(load_window_pos(&x, &y, &remembered_topmost) != 0) {
             x = work.left + (work.right - work.left - ww) / 2;
             y = work.top + (work.bottom - work.top - wh) / 2;
+        }
+        else if(!g_topmost_forced) {
+            g_topmost = remembered_topmost;
         }
         SetWindowPos(g_hwnd, HWND_TOP, x, y, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
     }
     SetForegroundWindow(g_hwnd);
     BringWindowToTop(g_hwnd);
+
+    if(g_topmost) apply_topmost();
+    g_hotkey_ok = RegisterHotKey(g_hwnd, 1, MOD_CONTROL | MOD_ALT, (UINT)'T');
+    if(!g_hotkey_ok) {
+        fprintf(stderr, "[host] cannot register Ctrl+Alt+T (err %lu)\n", GetLastError());
+    }
 
     src_fingerprint(g_fp, sizeof(g_fp));
     if(load_ui() != 0) {

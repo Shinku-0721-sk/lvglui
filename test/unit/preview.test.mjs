@@ -44,6 +44,15 @@ test('previewArgs builds the full parameterized command line', () => {
   assert.equal(args.length, 14);
 });
 
+test('previewArgs pins the window only when asked', () => {
+  const off = previewArgs(projectCtx());
+  assert.ok(!off.includes('--topmost'));
+
+  const on = previewArgs(projectCtx(), { topmost: true });
+  assert.equal(on[on.length - 1], '--topmost');
+  assert.equal(on.length, off.length + 1);
+});
+
 test('previewArgs never emits the legacy exe-relative paths', () => {
   const ctx = projectCtx();
   const args = previewArgs(ctx);

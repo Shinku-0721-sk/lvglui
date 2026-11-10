@@ -50,6 +50,7 @@ const KNOWN_FLAGS = new Set([
   'force',
   'noBuild',
   'noRender',
+  'topmost',
   'preset',
   'size',
   'chars',
@@ -92,6 +93,7 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   --frames <n>      渲染帧数（默认 12）
   --out <dir>       渲染输出目录（默认 <project>/.lvglui/out）
   --no-build        渲染时跳过编译，直接复用已有 shot.exe
+  --topmost        实时预览窗口置顶（Ctrl+Alt+T 也可以随时切换）
   --page <name>     只渲染某一页（需要界面实现 ui_page_* 契约）
   --all-pages       渲染所有页，另出一张 shot-sheet.png 总览
   --json            render / build / doctor 只向 stdout 输出结果 JSON，日志走 stderr
@@ -523,7 +525,7 @@ async function runPreview(flags) {
   const ctx = loadFor('preview', flags);
   if (!ctx.ok) return reportContextFailure(ctx, false);
 
-  const result = previewProject(ctx);
+  const result = previewProject(ctx, { topmost: flags.topmost === true });
   if (!result.ok) {
     console.error(`[lvglui] preview failed (${result.error?.stage ?? 'unknown'}): ${result.error?.message ?? 'unknown error'}`);
     switch (result.error?.stage) {

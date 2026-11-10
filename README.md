@@ -203,7 +203,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 | `build` | 只编译 host 渲染器 |
 | `watch` | 监听 `uiDir` 的 `.c/.h`，防抖 300ms 后重渲 |
 | `serve` | HTTP + SSE 预览（`127.0.0.1:8765`，占用自动 +1） |
-| `preview` | 打开实时窗口；保存→重编→换 `ui.dll`，失败保留旧画面；窗口可拖到任意位置并记住 |
+| `preview` | 打开实时窗口；保存→重编→换 `ui.dll`，失败保留旧画面；窗口可拖到任意位置并记住；`--topmost` 置顶 |
 | `init` | 注入 UI 组件骨架和 `lvglui.json` |
 | `font add` | 生成工程字体：默认 labels 子集，`--dynamic common` 常用字大子集，`--dynamic freetype` 运行时 FreeType |
 | `font off` | 移除工程字体、主题挂载和 CMake 条目 |
@@ -221,6 +221,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 - `--no-build`：复用已有 `shot.exe`（shot 缺失时会自动构建）
 - `--page <name>`：只渲染某一页（需要 `ui_page_*` 契约）
 - `--all-pages`：渲染所有页，另出 `shot-sheet.png` 总览
+- `--topmost`：`preview` 窗口置顶（开着窗口时也可随时按 `Ctrl+Alt+T` 切换）
 - `--json`：`render/build/doctor` 只向 stdout 输出 JSON，日志走 stderr
 - `--no-render`：`init` 后不做空白页渲染
 - `--preset noto-sans-sc`：`font add` 使用工具自带字体
@@ -237,6 +238,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 ### 实时预览的细节
 
 - **窗口拖到哪就是哪**：整块画面都能当标题栏拖（1.x 没有可点的控件），松手后位置记在 `.lvglui/build/preview-window.txt`，下次 `preview` 原位打开。
+- **想一直看着画面**：`preview --topmost` 让窗口始终在其它窗口之上，写代码时不用来回切。开着窗口也能用 `Ctrl+Alt+T` 随时置顶/取消，标题栏会显示 `[topmost]`；这个开关也会和位置一起记住。
 - **保存到刷新约 1 秒**：第一次启动会把 `vcvars64.bat` 的环境缓存成 `.lvglui/build/build-fast.cmd`，之后每次保存只跑 `cmake --build --target ui`，省掉 1.3 秒的 vcvars 和 0.3 秒的 configure。文件轮询 50ms、防抖 100ms。
 - 构建失败时窗口保留旧画面，标题变成 `reload failed (see build.log)`，不会每 100ms 重试刷屏。
 - 想看鼠标/移动事件，设 `LVGLUI_PREVIEW_DEBUG=1`，日志写到 `.lvglui/build/preview-debug.log`。

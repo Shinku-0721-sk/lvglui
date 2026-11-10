@@ -106,7 +106,12 @@ const TOOLS = [
     description: '在桌面上打开实时预览窗口；保存界面源码会自动重建并重载。',
     inputSchema: {
       type: 'object',
-      properties: { project: PROJECT_ARG, width: WIDTH_ARG, height: HEIGHT_ARG },
+      properties: {
+        project: PROJECT_ARG,
+        width: WIDTH_ARG,
+        height: HEIGHT_ARG,
+        topmost: { type: 'boolean', description: '让窗口保持在其它窗口之上（Ctrl+Alt+T 也可以随时切换）' },
+      },
       additionalProperties: false,
     },
   },
@@ -265,7 +270,7 @@ async function callTool(name, args = {}) {
   if (name === 'preview_ui') {
     const ctx = load(project, true, args);
     if (!ctx.ok) return errorResult('工程探测失败', { problems: ctx.problems });
-    const p = previewProject(ctx);
+    const p = previewProject(ctx, { topmost: args.topmost === true });
     return toolResult(p, !p.ok);
   }
 

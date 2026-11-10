@@ -156,6 +156,9 @@ export function previewArgs(ctx, options = {}) {
   if (toolchain) {
     args.push('--cmake', toolchain.cmake, '--vcvars', toolchain.vcvars);
   }
+
+  // Keep the preview above the editor while the user writes UI code.
+  if (opts.topmost === true) args.push('--topmost');
   return args;
 }
 
