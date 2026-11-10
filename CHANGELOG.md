@@ -12,6 +12,7 @@ All notable changes to lvglui are documented here.
 - 实时预览新增置顶：`preview --topmost` 一开始就把窗口放在最上层，运行中按 `Ctrl+Alt+T` 可随时切换，标题栏显示 `[topmost]`，并与窗口位置一起记住；MCP 的 `preview_ui` 也接受 `topmost: true`。
 - `doctor` 可以在 `init` 之前跑：UI 还没注入时 `uiDir`/`entry` 只给 warn 和下一步提示，不再整体失败（`lvglui.json` 已存在但指向无效目录/入口仍是 fail）；快速开始顺序调整为 doctor → init。`doctor` 的 detail 也不再打印 `[object Object]`。
 - `init` 现在生成两个组件：`components/app_ui`（UI）和旁边的 `components/ui_port`（`ui_port.h` + `ui_port_impl.c`），`app_ui` 的 `REQUIRES` 带上 `ui_port`。这样 `ui_port_*` 的实现不再需要（也不能）放进 `main/`：`libmain.a` 排在 `libapp_ui.a` 之前且只扫描一次，放在 main 里固件会报 `undefined reference to ui_port_*`。host 预览通过新的 `LVGLUI_PORT_INCLUDE` cache 找到 `ui_port.h`；`doctor` 的 `uiPort` 检查也认识新位置。
+- 修复实时预览/无头渲染在界面第二次刷新时冻死：host 建了 display 却没注册 flush 回调，`disp->flushing` 置 1 后再没人清除，单缓冲路径下一次刷新会卡在 `wait_for_flushing()` 的忙等里（表现为静止画面正常，一旦界面更新就整窗僵住、点关闭无反应；1 秒定时器改 label 必现）。现在 host 注册一个立即调用 `lv_display_flush_ready()` 的 flush 回调，像素基线不变。
 - 构建失败时能报出链接错误：新增对 `xxx.obj : error LNK2019: …` 这类无行号的 MSVC 链接错误和 GCC `undefined reference to …` 的解析，按 `file|line|code|message` 去重，并给出 `snprintf/strdup` 在 MSVC C 模式缺失、缺符号实现的提示；`render`/`build` 读 `build.log` 改用 UTF-8→GBK 回退解码，cmd 输出的 `\r` 不再让行尾规则失效。
 
 ## [1.0.0-rc.1] - 2026-11-09

@@ -241,6 +241,16 @@ static lv_obj_t * build_root(void)
     return LVGLUI_ENTRY(NULL);
 }
 
+/* PC 端没有真实显示控制器：帧缓冲就是 s_fb，flush 立即算完成。
+   必须调 lv_display_flush_ready() 清掉 disp->flushing；否则单缓冲路径
+   会在下一次刷新时卡在 wait_for_flushing() 的忙等里（界面"冻住"）。 */
+static void ui_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * px_map)
+{
+    LV_UNUSED(area);
+    LV_UNUSED(px_map);
+    lv_display_flush_ready(disp);
+}
+
 int ui_attach(int width, int height)
 {
     if(width <= 0 || height <= 0) return -1;
@@ -258,6 +268,7 @@ int ui_attach(int width, int height)
     if(!s_fb) return -2;
     memset(s_fb, 0, sz);
     lv_display_set_buffers(s_disp, s_fb, NULL, sz, LV_DISPLAY_RENDER_MODE_FULL);
+    lv_display_set_flush_cb(s_disp, ui_flush_cb);
 
     lv_display_set_theme(s_disp, lv_theme_simple_init(s_disp));
 
