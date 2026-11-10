@@ -14,6 +14,7 @@ All notable changes to lvglui are documented here.
 - `init` 现在生成两个组件：`components/app_ui`（UI）和旁边的 `components/ui_port`（`ui_port.h` + `ui_port_impl.c`），`app_ui` 的 `REQUIRES` 带上 `ui_port`。这样 `ui_port_*` 的实现不再需要（也不能）放进 `main/`：`libmain.a` 排在 `libapp_ui.a` 之前且只扫描一次，放在 main 里固件会报 `undefined reference to ui_port_*`。host 预览通过新的 `LVGLUI_PORT_INCLUDE` cache 找到 `ui_port.h`；`doctor` 的 `uiPort` 检查也认识新位置。
 - 修复实时预览/无头渲染在界面第二次刷新时冻死：host 建了 display 却没注册 flush 回调，`disp->flushing` 置 1 后再没人清除，单缓冲路径下一次刷新会卡在 `wait_for_flushing()` 的忙等里（表现为静止画面正常，一旦界面更新就整窗僵住、点关闭无反应；1 秒定时器改 label 必现）。现在 host 注册一个立即调用 `lv_display_flush_ready()` 的 flush 回调，像素基线不变。
 - 构建失败时能报出链接错误：新增对 `xxx.obj : error LNK2019: …` 这类无行号的 MSVC 链接错误和 GCC `undefined reference to …` 的解析，按 `file|line|code|message` 去重，并给出 `snprintf/strdup` 在 MSVC C 模式缺失、缺符号实现的提示；`render`/`build` 读 `build.log` 改用 UTF-8→GBK 回退解码，cmd 输出的 `\r` 不再让行尾规则失效。
+- 渲染主题不再由 host 硬编码：去掉 `lv_theme_simple_init()`，改由 `lv_display_create()` 按 `LV_USE_THEME_DEFAULT / SIMPLE / MONO` 自动选择，和固件走同一条路径；工程自己在 UI 入口调用 `lv_display_set_theme()` 也照样生效。此前含默认样式控件（按钮、滑杆、开关等）的界面在预览和固件上会不一致（实测一个未加样式的 `lv_button` 相差 5% 像素）；已自己固定 simple 主题的工程（如 my_lcd）基线不变。README 补了"像素一致的前提"。
 
 ## [1.0.0-rc.1] - 2026-11-09
 

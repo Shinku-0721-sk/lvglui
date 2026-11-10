@@ -270,7 +270,10 @@ int ui_attach(int width, int height)
     lv_display_set_buffers(s_disp, s_fb, NULL, sz, LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(s_disp, ui_flush_cb);
 
-    lv_display_set_theme(s_disp, lv_theme_simple_init(s_disp));
+    /* 主题跟随 lv_conf 和工程自己的选择：lv_display_create() 已按
+       LV_USE_THEME_DEFAULT / SIMPLE / MONO 选好，和固件走同一条路径。
+       不要在这里硬编码，否则没写显式样式的控件会和固件长得不一样；
+       工程若在 UI 入口里自己调 lv_display_set_theme()，同样会生效。 */
 
     s_screen = build_root();
     if(!s_screen) {
