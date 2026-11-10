@@ -84,6 +84,38 @@ function failure(stage, message, args = []) {
   return { ok: false, pid: null, args, error: { stage, message } };
 }
 
+// The launcher is built once into the project's build dir. When the tool's own
+// host sources change (a new release, a fix like the draggable window), an
+// existing preview.exe would silently keep the old behaviour, so compare the
+// mtimes of the files that make up the launcher.
+const LAUNCHER_SOURCES = [
+  'CMakeLists.txt',
+  'host/preview_main.c',
+  'host/ui_entry.c',
+  'host/ui_host.h',
+  'host/shot_main.c',
+  'host/png_write.c',
+];
+
+function toolSourcesNewer(exePath, toolDir) {
+  if (typeof toolDir !== 'string' || toolDir === '') return false;
+  let stamp;
+  try {
+    stamp = fs.statSync(exePath).mtimeMs;
+  } catch {
+    return true;
+  }
+  for (const rel of LAUNCHER_SOURCES) {
+    try {
+      if (fs.statSync(path.join(toolDir, rel)).mtimeMs > stamp) return true;
+    } catch {
+      // A missing host file is not a reason to rebuild; the build itself will
+      // report it if something is actually wrong.
+    }
+  }
+  return false;
+}
+
 /**
  * Build the preview.exe argv array. Pure: no filesystem access, no spawn.
  *
@@ -155,7 +187,9 @@ export function previewProject(ctx, options = {}) {
   const buildDir = path.resolve(ctx.buildDir);
   const exe = path.join(buildDir, 'preview.exe');
 
-  if (!fs.existsSync(exe)) {
+  // Rebuild the launcher when the tool's own host sources changed, otherwise a
+  // project that already has a preview.exe keeps the old window behaviour.
+  if (!fs.existsSync(exe) || toolSourcesNewer(exe, ctx.toolDir)) {
     if (!toolchain) return failure('toolchain', resolved.message, args);
     const build = buildHost({ ...ctx, buildDir, toolchain });
     if (!build.ok) {

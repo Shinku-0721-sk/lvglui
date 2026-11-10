@@ -15,6 +15,7 @@ description: 在 ESP-IDF 6.x + LVGL 9.x 工程里编写或调整 UI 页面：用
    - `entry` 是入口函数（如 `sensor_ui_create`）；
    - `idf` 是 6.x，`lvgl` 是 9.x，`display` 是预期分辨率。
 2. 调 `mcp__lvglui__doctor`。有 `fail` 先修：
+   - `uiDir`/`entry` 只是 `warn` 且提示 `lvglui init` 时，说明 UI 还没注入，继续第 3 步即可；
    - IDF/LVGL 版本不对：让用户改工程，不要自己拉组件；
    - 工具链缺失：让用户装 VS2022 Build Tools / CMake / Ninja；
    - 平台头文件：UI 里只能 include LVGL 和 UI 自己的头；

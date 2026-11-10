@@ -8,6 +8,7 @@ All notable changes to lvglui are documented here.
 - `init` 模板新增 `include/ui_pages.h` 与 `src/ui_pages.c`（默认一页 `home`）。
 - 实时预览：整块画面都可拖动窗口，位置写入 `.lvglui/build/preview-window.txt` 并在下次原位恢复；进程改为 per-monitor DPI aware。
 - 实时预览：首次启动缓存 `vcvars64.bat` 环境到 `.lvglui/build/build-fast.cmd`，之后每次保存只跑 `cmake --build --target ui`；文件轮询 50ms、防抖 100ms。实测保存到刷新从约 2.4s 降到约 1.0s。
+- `preview` 会在工具自身的 `host/*.c`/`CMakeLists.txt` 比工程里的 `preview.exe` 新时自动重建启动器，避免升级后仍跑旧窗口行为。
 - `doctor` 可以在 `init` 之前跑：UI 还没注入时 `uiDir`/`entry` 只给 warn 和下一步提示，不再整体失败（`lvglui.json` 已存在但指向无效目录/入口仍是 fail）；快速开始顺序调整为 doctor → init。`doctor` 的 detail 也不再打印 `[object Object]`。
 
 ## [1.0.0-rc.1] - 2026-11-09
