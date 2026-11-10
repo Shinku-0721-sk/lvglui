@@ -15,7 +15,7 @@ import { writeLvConf, applyOverrides } from './kconfig.mjs';
 import { findToolchain } from './toolchain.mjs';
 import { parseDiagnostics } from './diagnostics.mjs';
 import { readTree, compactTree, collectNames } from './tree.mjs';
-import { writeIfChanged, sha256File } from './fsutil.mjs';
+import { writeIfChanged, sha256File, readText } from './fsutil.mjs';
 import { encodeRgb565Png } from './png.mjs';
 import { previewOverrides } from './font.mjs';
 import { detectPages, pageFileStems } from './pages.mjs';
@@ -294,7 +294,10 @@ export function renderProject(ctx, options = {}) {
     if (!build.ok) {
       let log = build.stderr;
       try {
-        log = fs.readFileSync(build.logPath, 'utf8');
+        // cmd.exe writes the log in the OEM code page (GBK on Chinese Windows);
+        // readText falls back to GBK when the bytes are not valid UTF-8.
+        const logged = build.logPath ? readText(build.logPath) : null;
+        if (logged) log = logged;
       } catch {
         // fall back to captured stderr
       }

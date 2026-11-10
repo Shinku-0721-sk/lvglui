@@ -281,7 +281,7 @@ skill 的约束是文字约定：只改 `uiDir`、不改 `main`/BSP/`sdkconfig`/
 | `需要 LVGL 9.x` | 检查 `managed_components/lvgl__lvgl` 或 `lvglDir` |
 | 找不到 vcvars/cmake/ninja | 装 VS2022 C++ 工具；或在 `lvglui.json.build` 写显式路径 |
 | `cannot determine display resolution` | 传 `--width/--height`，或写 `lvglui.json.display`，或让 `sdkconfig` 有唯一的一对宽高 |
-| 编译失败 | 看 `<project>/.lvglui/build/build.log` 和 `render --json` 的 `diagnostics` |
+| 编译失败 | 看 `<project>/.lvglui/build/build.log` 和 `render --json` 的 `diagnostics`；链接错误（`LNK2019`/`LNK1120`、`undefined reference`）同样会被解析出来 |
 | 中文显示方块 | 先 `lvglui font status`；需要时 `font add --preset noto-sans-sc`，改文案后重新生成 |
 | `--no-build` 仍构建 | `shot.exe` 不存在时这是预期行为；先跑一次完整 `render` |
 

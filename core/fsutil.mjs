@@ -11,6 +11,9 @@ import { createHash } from 'node:crypto';
 export function decodeBuffer(buf) {
   const text = buf.toString('utf8');
   if (!text.includes('\uFFFD')) return text;
+  // If the producer already substituted U+FFFD (a literal EF BF BD sequence in
+  // the bytes), decoding those bytes as GBK would only turn them into 锟斤拷.
+  if (buf.indexOf(Buffer.from('\uFFFD', 'utf8')) !== -1) return text;
   return new TextDecoder('gbk').decode(buf);
 }
 

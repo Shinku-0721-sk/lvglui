@@ -16,6 +16,7 @@ import { doctor } from '../core/doctor.mjs';
 import { buildHost, writeBuildScript } from '../core/build.mjs';
 import { previewProject } from '../core/preview.mjs';
 import { initProject } from '../core/init.mjs';
+import { readText } from '../core/fsutil.mjs';
 import { fontAdd, fontOff, fontStatus, FONT_PRESET, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../core/font.mjs';
 import { parseDiagnostics } from '../core/diagnostics.mjs';
 import { DISPLAY_MAX, DISPLAY_MIN } from '../core/config.mjs';
@@ -419,7 +420,10 @@ async function runBuild(flags) {
   if (!build.ok) {
     let log = build.stderr;
     try {
-      if (build.logPath) log = fs.readFileSync(build.logPath, 'utf8');
+      // The log is written by cmd.exe in the OEM code page; readText decodes
+      // UTF-8 first and falls back to GBK, so messages are readable.
+      const logged = build.logPath ? readText(build.logPath) : null;
+      if (logged) log = logged;
     } catch {
       // keep captured stderr
     }
