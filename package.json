@@ -39,6 +39,7 @@
     "examples",
     "host",
     "ui-template",
+    "ui-port-template",
     "CMakeLists.txt",
     "CHANGELOG.md",
     "CONTRIBUTORS.md",

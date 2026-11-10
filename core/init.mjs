@@ -15,10 +15,14 @@ const LVGL_COMPONENT_TOKEN = '__LVGL_COMPONENT__';
 const CONFIG_EXISTS_PROBLEM = 'lvglui.json 已存在；init 不会覆盖';
 
 // Copy order is also the order of the returned `created` list.
+const PORT_TEMPLATE_DIR = 'ui-port-template';
+const PORT_DIR_NAME = 'ui_port';
+const PORT_FILES = ['CMakeLists.txt', 'include/ui_port.h', 'ui_port_impl.c'];
+
+// Copy order is also the order of the returned `created` list.
 const TEMPLATE_FILES = [
   'CMakeLists.txt',
   'include/ui.h',
-  'include/ui_port.h',
   'include/ui_theme.h',
   'include/ui_pages.h',
   'include/pages/home.h',
@@ -165,6 +169,40 @@ export function integrationSnippet(config) {
  * @returns {{ok:boolean, created:string[], configFile:string|null,
  *   snippet:string, problems:string[]}}
  */
+// Shared pre-flight for both target directories: inside the root, no symlink
+// in the path, no existing .c files and no file we would overwrite.
+function checkTarget({ problems, rootAbs, abs, rel, files, label }) {
+  if (!insideRoot(rel)) {
+    problems.push(`${label} 必须位于工程根内: "${rel}" (${abs})`);
+    return;
+  }
+  const linked = findLinkedSegment(rootAbs, abs);
+  if (linked !== null) {
+    problems.push(`${label} 路径包含符号链接，拒绝写入: ${toPosix(path.relative(rootAbs, linked))} (${abs})`);
+    return;
+  }
+  const stat = statOrNull(abs);
+  if (stat === null) return;
+  if (!stat.isDirectory()) {
+    problems.push(`${label} 已存在且不是目录，拒绝覆盖: ${abs}`);
+    return;
+  }
+  const existingC = findCFiles(abs);
+  if (existingC.length > 0) {
+    const first = toPosix(path.relative(rootAbs, existingC[0]));
+    problems.push(
+      `${label} 已存在且包含 .c 文件，拒绝覆盖: ${first}` +
+        (existingC.length > 1 ? ` (等共 ${existingC.length} 个)` : ''),
+    );
+  }
+  for (const name of files) {
+    const dest = path.join(abs, name);
+    if (statOrNull(dest) !== null) {
+      problems.push(`目标文件已存在，拒绝覆盖: ${toPosix(path.relative(rootAbs, dest))}`);
+    }
+  }
+}
+
 export function initProject(ctx, { width, height, force = false } = {}) {
   void force;
 
@@ -203,17 +241,24 @@ export function initProject(ctx, { width, height, force = false } = {}) {
       );
     }
 
-    // ---- Template directory (the checkout that owns this module).
+    // ---- Templates (the checkout that owns this module).
     const toolDir = path.resolve(
       isNonEmptyString(ctx.toolDir) ? ctx.toolDir : path.join(import.meta.dirname, '..'),
     );
-    const templateDir = path.join(toolDir, TEMPLATE_DIR);
-    const templateSources = new Map();
-    for (const rel of TEMPLATE_FILES) {
-      const source = path.join(templateDir, rel);
-      if (statOrNull(source) === null) problems.push(`UI 模板缺失: ${source}`);
-      else templateSources.set(rel, source);
-    }
+    const groups = [
+      { dir: TEMPLATE_DIR, files: TEMPLATE_FILES, kind: 'UI' },
+      { dir: PORT_TEMPLATE_DIR, files: PORT_FILES, kind: 'ui_port' },
+    ];
+    const templateSources = groups.map((group) => {
+      const dir = path.join(toolDir, group.dir);
+      const files = new Map();
+      for (const rel of group.files) {
+        const source = path.join(dir, rel);
+        if (statOrNull(source) === null) problems.push(`${group.kind} 模板缺失: ${source}`);
+        else files.set(rel, source);
+      }
+      return files;
+    });
 
     // ---- LVGL component name: the CMake component is the directory basename
     // (`lvgl__lvgl` for managed_components, `lvgl` for components/lvgl).
@@ -224,63 +269,48 @@ export function initProject(ctx, { width, height, force = false } = {}) {
       problems.push('ctx.lvgl.dir 未设置；无法确定 UI 组件的 REQUIRES 名称（init 未写入任何文件）');
     }
 
-    // ---- Target directory: config.uiDir, then ctx.uiDir, then the default.
+    // ---- Target directories: the UI component (config.uiDir, then ctx.uiDir,
+    // then the default) and the ui_port component next to it. The port must be
+    // its own component so that libapp_ui.a can resolve ui_port_* symbols:
+    // anything living in `main` is linked *before* app_ui and is scanned only
+    // once, so its archive members are never pulled in.
     const configuredUiDir = isNonEmptyString(ctx.config?.uiDir) ? ctx.config.uiDir : null;
     const contextUiDir = isNonEmptyString(ctx.uiDir) ? ctx.uiDir : null;
     const uiDirSpec = configuredUiDir ?? contextUiDir ?? DEFAULT_UI_DIR;
     const targetAbs = path.resolve(rootAbs, uiDirSpec);
     const relTarget = path.relative(rootAbs, targetAbs);
+    const relParent = path.dirname(relTarget);
+    const portRel = relParent === '' || relParent === '.' ? PORT_DIR_NAME : path.join(relParent, PORT_DIR_NAME);
+    const portAbs = path.resolve(rootAbs, portRel);
 
-    if (!insideRoot(relTarget)) {
-      problems.push(`uiDir 必须位于工程根内: "${uiDirSpec}" (${targetAbs})`);
-    } else {
-      const linked = findLinkedSegment(rootAbs, targetAbs);
-      if (linked !== null) {
-        problems.push(
-          `uiDir 路径包含符号链接，拒绝写入: ${toPosix(path.relative(rootAbs, linked))} (${targetAbs})`,
-        );
-      } else {
-        const targetStat = statOrNull(targetAbs);
-        if (targetStat !== null && !targetStat.isDirectory()) {
-          problems.push(`uiDir 已存在且不是目录，拒绝覆盖: ${targetAbs}`);
-        } else if (targetStat !== null) {
-          const existingC = findCFiles(targetAbs);
-          if (existingC.length > 0) {
-            const first = toPosix(path.relative(rootAbs, existingC[0]));
-            problems.push(
-              `uiDir 已存在且包含 .c 文件，拒绝覆盖: ${first}` +
-                (existingC.length > 1 ? ` (等共 ${existingC.length} 个)` : ''),
-            );
-          }
-          for (const rel of TEMPLATE_FILES) {
-            const dest = path.join(targetAbs, rel);
-            if (statOrNull(dest) !== null) {
-              problems.push(`目标文件已存在，拒绝覆盖: ${toPosix(path.relative(rootAbs, dest))}`);
-            }
-          }
-        }
-      }
-    }
+    checkTarget({ problems, rootAbs, abs: targetAbs, rel: relTarget, files: TEMPLATE_FILES, label: 'uiDir' });
+    checkTarget({ problems, rootAbs, abs: portAbs, rel: portRel, files: PORT_FILES, label: 'ui_port 组件' });
 
     if (problems.length > 0) return fail();
 
     // ---- Write. Validation is complete; failures here may leave partial
     // output, which the catch reports together with the files already written.
-    fs.mkdirSync(targetAbs, { recursive: true });
-    for (const rel of TEMPLATE_FILES) {
-      const source = templateSources.get(rel);
-      const dest = path.join(targetAbs, rel);
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      if (rel === 'CMakeLists.txt') {
-        const text = fs.readFileSync(source, 'utf8').replaceAll(LVGL_COMPONENT_TOKEN, componentName);
-        if (text.includes(LVGL_COMPONENT_TOKEN)) {
-          throw new Error(`failed to substitute ${LVGL_COMPONENT_TOKEN} in ${source}`);
+    const targets = [
+      { abs: targetAbs, files: TEMPLATE_FILES, sources: templateSources[0] },
+      { abs: portAbs, files: PORT_FILES, sources: templateSources[1] },
+    ];
+    for (const target of targets) {
+      fs.mkdirSync(target.abs, { recursive: true });
+      for (const rel of target.files) {
+        const source = target.sources.get(rel);
+        const dest = path.join(target.abs, rel);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        if (rel === 'CMakeLists.txt') {
+          const text = fs.readFileSync(source, 'utf8').replaceAll(LVGL_COMPONENT_TOKEN, componentName);
+          if (text.includes(LVGL_COMPONENT_TOKEN)) {
+            throw new Error(`failed to substitute ${LVGL_COMPONENT_TOKEN} in ${source}`);
+          }
+          fs.writeFileSync(dest, text, { flag: 'wx' });
+        } else {
+          fs.copyFileSync(source, dest, fs.constants.COPYFILE_EXCL);
         }
-        fs.writeFileSync(dest, text, { flag: 'wx' });
-      } else {
-        fs.copyFileSync(source, dest, fs.constants.COPYFILE_EXCL);
+        created.push(toPosix(path.relative(rootAbs, dest)));
       }
-      created.push(toPosix(path.relative(rootAbs, dest)));
     }
 
     const config = buildConfig({

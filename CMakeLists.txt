@@ -41,6 +41,7 @@ set(LVGLUI_FREETYPE OFF CACHE BOOL "启用主机 FreeType（font.mode=freetype�
 set(LVGLUI_FREETYPE_DIR "" CACHE PATH "FreeType 安装前缀（含 include/freetype2 与 lib）")
 set(LVGLUI_FONT_PATH "" CACHE FILEPATH "预览端 TTF/OTF 绝对路径（font.mode=freetype）")
 set(LVGLUI_HAS_PAGES OFF CACHE BOOL "界面是否定义了 ui_page_count/ui_page_name/ui_page_show")
+set(LVGLUI_PORT_INCLUDE "" CACHE PATH "ui_port.h 所在目录（host 预览需要，固件走 CMake REQUIRES）")
 # ---- 兜底：不带参数时，假定工程就是工具所在仓库 ---------------------------
 if(NOT LVGLUI_PROJECT_DIR)
   get_filename_component(LVGLUI_PROJECT_DIR "${LVGLUI_TOOL_DIR}/../.." ABSOLUTE)
@@ -125,6 +126,11 @@ target_include_directories(ui_obj PUBLIC
   "${LVGLUI_UI_DIR}/include"
   "${LVGLUI_UI_DIR}"
 )
+# ui_port.h 现在住在独立组件里（components/ui_port/include）；host 只编 uiDir
+# 的 .c，所以这里把它的 include 目录补上。
+if(LVGLUI_PORT_INCLUDE)
+  target_include_directories(ui_obj PUBLIC "${LVGLUI_PORT_INCLUDE}")
+endif()
 target_compile_definitions(ui_obj PRIVATE
   LVGLUI_HOST=1
   LVGLUI_WIDTH=${LVGLUI_WIDTH}

@@ -86,8 +86,20 @@ test('loads config and derives paths', (t) => {
   assert.ok(path.isAbsolute(ctx.toolDir));
   assert.ok(fs.statSync(ctx.toolDir).isDirectory());
   assert.ok(fs.existsSync(path.join(ctx.toolDir, 'CMakeLists.txt')));
+  assert.equal(ctx.portInclude, null);
   assert.deepEqual(ctx.problems, []);
   assert.ok(Array.isArray(ctx.warnings));
+});
+
+test('finds the ui_port include dir of the generated layout', (t) => {
+  const root = project(t);
+  const portInclude = path.join(root, 'components', 'ui_port', 'include');
+  writeFile(path.join(portInclude, 'ui_port.h'), '#pragma once\n');
+
+  const ctx = loadContext({ projectDir: root });
+
+  assert.equal(ctx.ok, true, ctx.problems.join('; '));
+  assert.equal(ctx.portInclude, portInclude);
 });
 
 test('fails without a resolution instead of defaulting to 240x320', (t) => {

@@ -314,7 +314,20 @@ test('writes a quoted build script and cache for plan-style paths', (t) => {
   assert.match(cache, /set\(LVGLUI_HEIGHT "320" CACHE STRING ""\)/);
 });
 
-test('cache sets all thirteen variables with the exact values', (t) => {
+test('writes the port include dir into the cache when the project has one', (t) => {
+  const buildDir = tempDir(t, 'lvglui-port-');
+  const r = writeBuildScript({
+    ...planCtx(buildDir),
+    portInclude: 'D:/proj/components/ui_port/include',
+  });
+  const cache = fs.readFileSync(r.cacheScript, 'utf8');
+  assert.ok(
+    cache.includes('set(LVGLUI_PORT_INCLUDE "D:/proj/components/ui_port/include" CACHE PATH "")'),
+    cache,
+  );
+});
+
+test('cache sets all fourteen variables with the exact values', (t) => {
   const buildDir = tempDir(t, 'lvglui-cache-');
   const r = writeBuildScript(planCtx(buildDir));
   const cache = fs.readFileSync(r.cacheScript, 'utf8');
@@ -333,6 +346,7 @@ test('cache sets all thirteen variables with the exact values', (t) => {
     'set(LVGLUI_FREETYPE_DIR "" CACHE PATH "")',
     'set(LVGLUI_FONT_PATH "" CACHE FILEPATH "")',
     'set(LVGLUI_HAS_PAGES "OFF" CACHE BOOL "")',
+    'set(LVGLUI_PORT_INCLUDE "" CACHE PATH "")',
   ].join('\n')}\n`;
   assert.equal(cache, expected);
 });

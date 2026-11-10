@@ -80,6 +80,7 @@ export function loadContext({
       entry: null,
       entryHow: null,
       sources: [],
+      portInclude: null,
       pages: detectPages([]),
       idf: emptyIdf(),
       lvgl: emptyLvgl(),
@@ -195,6 +196,31 @@ export function loadContext({
   const pages = detectPages(discovery.sources);
   problems.push(...pages.problems);
 
+  // Optional port include dir: ui_port.h may live in its own component
+  // (components/ui_port/include) or in the UI component's own include dir.
+  // The host build only compiles uiDir sources, so it needs this path to find
+  // the header that the firmware gets through CMake REQUIRES.
+  let portInclude = null;
+  if (typeof discovery.uiDir === 'string' && discovery.uiDir !== '') {
+    const candidates = [
+      path.join(path.dirname(discovery.uiDir), 'ui_port', 'include'),
+      path.join(root, 'components', 'ui_port', 'include'),
+      path.join(discovery.uiDir, 'include'),
+    ];
+    for (const dir of candidates) {
+      try {
+        if (fs.statSync(path.join(dir, 'ui_port.h')).isFile()) {
+          portInclude = dir;
+          break;
+        }
+      } catch (e) {
+        if (e.code !== 'ENOENT' && e.code !== 'ENOTDIR') {
+          warnings.push(`failed to inspect ${dir}: ${e.message}`);
+        }
+      }
+    }
+  }
+
   const mergedProblems = uniqueStrings(problems);
   return {
     ok: mergedProblems.length === 0,
@@ -206,6 +232,7 @@ export function loadContext({
     entry: discovery.entry,
     entryHow: discovery.entryHow,
     sources: discovery.sources,
+    portInclude,
     pages,
     idf,
     lvgl,

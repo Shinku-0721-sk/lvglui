@@ -6,5 +6,5 @@ idf_component_register(
     "src/ui_port_stub.c"
     "src/pages/home.c"
   INCLUDE_DIRS "include"
-  REQUIRES __LVGL_COMPONENT__
+  REQUIRES __LVGL_COMPONENT__ ui_port
 )

@@ -22,6 +22,7 @@ const CMakeEntries = [
   ['LVGLUI_FREETYPE_DIR', 'freetypeDir', 'PATH'],
   ['LVGLUI_FONT_PATH', 'fontPath', 'FILEPATH'],
   ['LVGLUI_HAS_PAGES', 'hasPages', 'BOOL'],
+  ['LVGLUI_PORT_INCLUDE', 'portInclude', 'PATH'],
 ];
 
 function isPlainObject(value) {
@@ -83,6 +84,10 @@ function readCtx(ctx) {
   // Compiling the host with LVGLUI_HAS_PAGES is what lets ui_entry.c call the
   // three ui_page_* symbols; without it they are simply not referenced.
   const hasPages = ctx.pages?.supported === true;
+  const portInclude = typeof ctx.portInclude === 'string' && ctx.portInclude !== '' ? path.resolve(ctx.portInclude) : '';
+  if (portInclude !== '' && (portInclude.includes('"') || portInclude.includes('\r') || portInclude.includes('\n'))) {
+    throw new Error('writeBuildScript: ctx.portInclude must not contain quotes or newlines');
+  }
 
   return {
     toolDir,
@@ -98,6 +103,7 @@ function readCtx(ctx) {
     freetypeDir,
     fontPath,
     hasPages,
+    portInclude,
     vcvars,
     cmake,
     ninja,
@@ -156,6 +162,7 @@ function renderCache(values, buildDir) {
     freetypeDir: values.freetypeDir,
     fontPath: values.fontPath,
     hasPages: values.hasPages ? 'ON' : 'OFF',
+    portInclude: values.portInclude,
   };
   const lines = CMakeEntries.map(([name, key, type]) => (
     `set(${name} ${cmakeQuote(mapped[key], key)} CACHE ${type} "")`
@@ -241,7 +248,8 @@ function clearStaleCmakeCache(buildDir, values) {
     (value('LVGLUI_FONT_NAME') !== null && value('LVGLUI_FONT_NAME') !== values.fontName) ||
     (value('LVGLUI_FREETYPE') !== null && value('LVGLUI_FREETYPE') !== (values.freetype ? 'ON' : 'OFF')) ||
     (value('LVGLUI_FREETYPE_DIR') !== null && value('LVGLUI_FREETYPE_DIR') !== values.freetypeDir) ||
-    (value('LVGLUI_HAS_PAGES') !== null && value('LVGLUI_HAS_PAGES') !== (values.hasPages ? 'ON' : 'OFF'));
+    (value('LVGLUI_HAS_PAGES') !== null && value('LVGLUI_HAS_PAGES') !== (values.hasPages ? 'ON' : 'OFF')) ||
+    !samePath(value('LVGLUI_PORT_INCLUDE'), values.portInclude);
 
   if (!stale) return;
 

@@ -24,7 +24,7 @@ description: 在 ESP-IDF 6.x + LVGL 9.x 工程里编写或调整 UI 页面：用
 
 ## 写页面的流程
 
-1. 读 `uiDir` 里现有的 `ui.c`、`ui.h`、`ui_port.h`、`ui_theme.h` 和 `pages/`，沿用既有命名和风格。
+1. 读 `uiDir` 里现有的 `ui.c`、`ui.h`、`ui_theme.h` 和 `pages/`，以及同级的 `ui_port` 组件（`ui_port.h` 在那），沿用既有命名和风格。
 2. 先给出一个短计划：页面结构、控件、数据来源（哪个 `ui_port` 函数）、中文字体。用户确认后再写。
 3. 只改 `<uiDir>/**`。新增页面放在 `<uiDir>/src/pages/<name>.c`，在 `ui.c` 里挂载。
 4. 布局用 flex/grid；尺寸用 `lv_pct` 或相对常量；不要写死与屏幕分辨率无关的像素；屏幕尺寸以 `ctx.display`/`lvglui.json` 为准。
@@ -42,7 +42,7 @@ description: 在 ESP-IDF 6.x + LVGL 9.x 工程里编写或调整 UI 页面：用
 
 - UI 只依赖 LVGL 和 UI 自己的头（`ui.h`、`ui_port.h`、`ui_theme.h` 等）；**禁止** `#include "esp_..."`、`freertos/...`、`driver/...`、`nvs...`。
 - 业务数据/命令只通过 `ui_port.h` 的 `ui_port_*` 函数。UI 不直接读传感器、不写 NVS、不建任务、不调 `vTaskDelay`。
-- `ui_port_stub.c` 是 host 预览用的桩，全部包在 `#ifdef LVGLUI_HOST` 里；固件里是空 TU。用户在 `main/ui_port_impl.c` 实现强符号。
+- `ui_port_stub.c` 是 host 预览用的桩，全部包在 `#ifdef LVGLUI_HOST` 里；固件里是空 TU。真正的实现在 `components/ui_port/ui_port_impl.c`（独立组件，app_ui 依赖它）。**不要**把它放进 `main/`：链接顺序会导致 `undefined reference to ui_port_*`。
 - 不改 `main/`、BSP、`sdkconfig`、工程级 `CMakeLists.txt`、`managed_components/`。
 - 不做点击/滑动/动画的交互模拟；1.x 只验证静态布局和初始数据（交互注入排在 2.0）。用户若要求验证点击后的状态，说明做不到，并改成建议用回调逻辑走查或上板自测。
 - 不拉 LVGL 组件、不搭显示/触摸 bridge；这些是用户的前置工作。
@@ -76,6 +76,6 @@ lv_obj_t *page_home_create(lv_obj_t *parent) {
 
 - `doctor` 的 `fail`：先修配置/头文件/版本，不要绕过。
 - 编译错误：读 `render_ui` 返回的 `diagnostics`，按文件:行修第一条；不要一次改很多处。
-- 链接错误 `ui_port_*`：说明用户在 `main/ui_port_impl.c` 还没实现，报告缺失符号，不要替用户写业务。
+- 链接错误 `ui_port_*`：说明 `components/ui_port/ui_port_impl.c` 还没实现（或实现被挪进了 `main/`，链接顺序拉不进来）；报告缺失符号，不要替用户写业务。
 - 渲染成功但图片不对：先查 `tree` 的尺寸/文本，再查字体和 flex 参数；一次只改一个变量。
 - 工具不可用：让用户跑 `node cli/lvglui.mjs doctor --project <path>` 或 `dsh install` 后重启。

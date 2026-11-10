@@ -39,7 +39,7 @@ node cli/lvglui.mjs preview --project D:/my_project
 
 `init` 会：
 
-- 创建 `components/app_ui/`（或 `lvglui.json` 指定的 `uiDir`）
+- 创建 `components/app_ui/`（或 `lvglui.json` 指定的 `uiDir`）和旁边的 `components/ui_port/`
 - 创建 `lvglui.json`
 - 在 stdout 打印一段接入代码；需要你把它粘到 `main` 里（通常替换原来的 `lv_screen_load(...)`）
 
@@ -99,15 +99,20 @@ lv_obj_t *ui_start(lv_obj_t *parent);
 业务数据只通过 `ui_port.h`：
 
 ```c
-/* ui_port.h —— 由用户在 main/ui_port_impl.c 实现强符号 */
+/* components/ui_port/include/ui_port.h —— 业务实现在同组件的 ui_port_impl.c */
 float ui_port_get_temperature(void);
 float ui_port_get_humidity(void);
 void  ui_port_set_relay(bool on);
 ```
 
 - UI 层只声明/调用 `ui_port_*`，不碰业务状态
-- `ui_template` 里的 `ui_port_stub.c` 在 PC 构建时提供桩；固件构建时是空 TU，用户在 `main/ui_port_impl.c` 提供强符号
+- `components/ui_port/` 是业务适配层：头文件 + 实现都在这里，`app_ui` 的 `CMakeLists.txt` 写 `REQUIRES ... ui_port`
+- `app_ui` 里的 `ui_port_stub.c` 在 PC 构建时提供桩；固件构建时是空 TU
 - 缺实现会在链接期报错，不会悄悄编过
+
+> **不要把 `ui_port_impl.c` 放进 `main/`。** `libmain.a` 排在 `libapp_ui.a` 之前且只被扫描一次，
+> 扫 main 时还没有人引用 `ui_port_*`，那个 .obj 不会被拉进来，后面 app_ui 需要时就报
+> `undefined reference to 'ui_port_get_temperature'`。放进独立组件 `ui_port`（app_ui 依赖它）才对。
 
 控件命名用 `lv_obj_set_name(obj, "val_temp")`（预览 `lv_conf.h` 强制开启 `LV_USE_OBJ_NAME`；固件侧也要开），渲染时 `tree.json` 和 PNG 一起给你。
 
@@ -260,7 +265,7 @@ node cli/lvglui.mjs dsh install
 
 > 在 D:/my_project 里把 home 页改成三个传感器卡片，数据走 ui_port，改完截图给我看。
 
-skill 的约束是文字约定：只改 `uiDir`、不改 `main`/BSP/`sdkconfig`/工程 CMakeLists、不 include 平台头、业务只走 `ui_port`。没有强制写入围栏，也没有自动审计。
+skill 的约束是文字约定：只改 `uiDir`（含同级的 `ui_port` 组件）、不改 `main`/BSP/`sdkconfig`/工程 CMakeLists、不 include 平台头、业务只走 `ui_port`。没有强制写入围栏，也没有自动审计。
 
 > 移动工具目录后必须重新跑 `dsh install`，再重新安装 bundle；`dsh/cordis.patch.yml` 是生成文件，已被 `.gitignore` 忽略。
 

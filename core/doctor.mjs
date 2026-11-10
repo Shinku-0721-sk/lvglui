@@ -325,14 +325,30 @@ function checkToolchain(toolchain) {
 }
 
 function checkUiPort(ctx) {
+  // The header lives in the ui_port component (components/ui_port/include) in
+  // the layout init generates; older projects keep it in the UI component.
+  if (typeof ctx?.portInclude === 'string' && ctx.portInclude !== '') {
+    return makeCheck('uiPort', 'ok', `ui_port.h：${path.join(ctx.portInclude, 'ui_port.h')}`);
+  }
   if (typeof ctx?.uiDir !== 'string' || ctx.uiDir === '') {
     return makeCheck('uiPort', 'warn', 'UI 目录未确定，未检查 ui_port.h');
   }
-  const header = path.join(ctx.uiDir, 'include', 'ui_port.h');
-  if (!fs.existsSync(header)) {
-    return makeCheck('uiPort', 'warn', `未找到 ui_port.h：${header}`, { file: header });
+  if (ctx?.configFile == null || ctx.configFile === '') {
+    return makeCheck(
+      'uiPort',
+      'warn',
+      '未注入 UI 层：没有 ui_port.h，先运行 lvglui init 生成 UI 组件和 ui_port 组件',
+      { file: ctx.uiDir },
+    );
   }
-  return makeCheck('uiPort', 'ok', `ui_port.h：${header}`);
+  const header = path.join(ctx.uiDir, 'include', 'ui_port.h');
+  return makeCheck(
+    'uiPort',
+    'warn',
+    `未找到 ui_port.h：期望 ${path.join(path.dirname(ctx.uiDir), 'ui_port', 'include', 'ui_port.h')} 或 ${header}；` +
+      'ui_port 组件缺失时固件会报 undefined reference to ui_port_*',
+    { file: header },
+  );
 }
 
 function checkFont(ctx) {

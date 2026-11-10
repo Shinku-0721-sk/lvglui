@@ -5,10 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { initProject, integrationSnippet } from '../../core/init.mjs';
 
+const PORT_FILES = ['CMakeLists.txt', 'include/ui_port.h', 'ui_port_impl.c'];
+
 const TEMPLATE_FILES = [
   'CMakeLists.txt',
   'include/ui.h',
-  'include/ui_port.h',
   'include/ui_theme.h',
   'include/ui_pages.h',
   'include/pages/home.h',
@@ -55,7 +56,14 @@ test('initProject creates the template files and config, then refuses a second r
     for (const rel of TEMPLATE_FILES) {
       assert.ok(fs.existsSync(path.join(uiDir, rel)), `missing ${rel}`);
     }
-    const expectedCreated = TEMPLATE_FILES.map((rel) => `components/app_ui/${rel}`);
+    const portDir = path.join(root, 'components', 'ui_port');
+    for (const rel of PORT_FILES) {
+      assert.ok(fs.existsSync(path.join(portDir, rel)), `missing ui_port/${rel}`);
+    }
+    const expectedCreated = [
+      ...TEMPLATE_FILES.map((rel) => `components/app_ui/${rel}`),
+      ...PORT_FILES.map((rel) => `components/ui_port/${rel}`),
+    ];
     assert.deepEqual([...result.created].sort(), expectedCreated.sort());
     assert.equal(result.configFile, path.join(root, 'lvglui.json'));
 
@@ -76,7 +84,12 @@ test('initProject creates the template files and config, then refuses a second r
     // The managed component directory name is the REQUIRES name; the template
     // token must never leak into the generated project.
     const cmake = fs.readFileSync(path.join(uiDir, 'CMakeLists.txt'), 'utf8');
-    assert.match(cmake, /REQUIRES\s+lvgl__lvgl/);
+    assert.match(cmake, /REQUIRES\s+lvgl__lvgl\s+ui_port/);
+    const portCmake = fs.readFileSync(path.join(portDir, 'CMakeLists.txt'), 'utf8');
+    assert.match(portCmake, /REQUIRES\s+lvgl__lvgl/);
+    assert.doesNotMatch(portCmake, /__LVGL_COMPONENT__/);
+    const portImpl = fs.readFileSync(path.join(portDir, 'ui_port_impl.c'), 'utf8');
+    assert.match(portImpl, /ui_port_get_temperature/);
     assert.ok(!cmake.includes('__LVGL_COMPONENT__'));
 
     const second = initProject(fixtureCtx(root));
@@ -137,6 +150,28 @@ test('initProject rejects an existing uiDir containing a .c file', () => {
     assert.ok(!fs.existsSync(path.join(root, 'lvglui.json')));
     assert.ok(!fs.existsSync(path.join(uiDir, 'CMakeLists.txt')));
     assert.equal(fs.readFileSync(path.join(uiDir, 'src', 'legacy.c'), 'utf8'), 'int legacy;\n');
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('initProject refuses to overwrite an existing ui_port component', () => {
+  const { base, root } = makeRoot();
+  try {
+    const portDir = path.join(root, 'components', 'ui_port');
+    fs.mkdirSync(portDir, { recursive: true });
+    fs.writeFileSync(path.join(portDir, 'ui_port_impl.c'), 'float ui_port_get_temperature(void){return 1;}\n');
+
+    const result = initProject(fixtureCtx(root));
+
+    assert.equal(result.ok, false);
+    assert.ok(result.problems.some((p) => p.includes('ui_port') && p.includes('.c')));
+    assert.ok(!fs.existsSync(path.join(root, 'lvglui.json')));
+    assert.ok(!fs.existsSync(path.join(root, 'components', 'app_ui')));
+    assert.equal(
+      fs.readFileSync(path.join(portDir, 'ui_port_impl.c'), 'utf8'),
+      'float ui_port_get_temperature(void){return 1;}\n',
+    );
   } finally {
     cleanup(base);
   }
