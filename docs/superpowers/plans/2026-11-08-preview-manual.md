@@ -98,3 +98,42 @@ Command/output highlights from this session:
 - Build-failure preservation (old DLL kept, `build failed (see build.log)`) was
   not induced in this smoke, because the UI sources were protected and no
   deliberate broken build was introduced.
+
+## Update 2026-11-10: window moves, rebuilds are ~1s
+
+Two problems reported against real use: the window could not be dragged (it
+always reappeared centered) and saving took 1–2s to show up.
+
+What changed in `host/preview_main.c`:
+
+- `WM_NCHITTEST` returns `HTCAPTION` for the client area, so the whole canvas
+  drags the window. Frame edges still resize via `DefWindowProcW`. The window
+  position is saved on `WM_EXITSIZEMOVE`/`WM_DESTROY` to
+  `<build-dir>\preview-window.txt` and restored on the next launch (centered
+  only when the file is missing or the point is off-screen).
+- Process is per-monitor DPI aware v2 (`SetProcessDpiAwarenessContext(-4)`),
+  falling back to `SetProcessDPIAware()`. A 240x320 UI is 240x320 physical
+  pixels on a 150% display instead of a scaled bitmap.
+- Rebuild no longer pays for `vcvars64.bat` (1.29s) and the CMake configure
+  (0.3s) on every save. At startup the captured environment is written to
+  `<build-dir>\vsenv.txt`, then replayed as `<build-dir>\build-fast.cmd`
+  (`setlocal`, the variables, one `cmake --build --target ui`). Values outside
+  printable ASCII are dropped; if `PATH`/`INCLUDE`/`LIB`/`LIBPATH` is
+  non-ASCII the fast path is abandoned and `build.cmd` is used instead.
+- `--cmake` and `--vcvars` are new arguments, supplied by `core/preview.mjs`
+  when a toolchain is known.
+- `FILE_POLL_MS` 100→50, `DEBOUNCE_MS` 300→100. `[host] build took N ms` is
+  printed after each rebuild and `LVGLUI_PREVIEW_DEBUG=1` logs window and
+  mouse messages to `<build-dir>\preview-debug.log`.
+
+Measured on `D:/esps3_test/my_lcd` (240x320, `components/app_ui`):
+
+| step | before | after |
+| --- | --- | --- |
+| `cmd /c build.cmd` (no-op) | 2030–2140 ms | 630–830 ms (`build-fast.cmd`) |
+| save → new pixels | ~2.4 s | ~1.0 s (50 ms poll + 100 ms debounce + 0.83 s build) |
+
+Verified: `WM_NCHITTEST` on the client center returns 2 (`HTCAPTION`), a moved
+window restores to the saved rectangle, and one save produced
+`[host] build took 829 ms` followed by `[host] reloaded ok`.
+`npm test` 185 pass; `npm run test:integration` 13 pass.

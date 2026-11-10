@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <wchar.h>
 #include "ui_host.h"
 
@@ -35,8 +36,8 @@
 #define PATH_CAP        4096
 #define MAX_WATCH       16
 #define BUILD_POLL_MS   33
-#define FILE_POLL_MS    100
-#define DEBOUNCE_MS     300
+#define FILE_POLL_MS    50
+#define DEBOUNCE_MS     100
 
 static HWND    g_hwnd;
 static HMODULE g_dll;
@@ -58,6 +59,20 @@ static wchar_t g_live_path[PATH_CAP];  /* currently loaded ui_live_N.dll   */
 static wchar_t g_watch[MAX_WATCH][PATH_CAP];
 static int     g_watch_count;
 static unsigned g_live_seq;
+
+/* rebuild acceleration: one captured VS environment, then plain cmake */
+static wchar_t g_cmake[PATH_CAP];       /* --cmake: cmake.exe                */
+static wchar_t g_vcvars[PATH_CAP];      /* --vcvars: vcvars64.bat            */
+static wchar_t g_vsenv_path[PATH_CAP];  /* <build-dir>\vsenv.txt             */
+static wchar_t g_fast_cmd_path[PATH_CAP]; /* <build-dir>\build-fast.cmd      */
+static int     g_env_ready;
+static HANDLE  g_env_proc;              /* background vcvars capture         */
+static DWORD   g_build_started;
+
+/* window quality-of-life */
+static wchar_t g_pos_path[PATH_CAP];    /* <build-dir>\preview-window.txt    */
+static wchar_t g_dbg_path[PATH_CAP];    /* <build-dir>\preview-debug.log     */
+static int     g_debug;
 
 static char g_fp[32];                  /* last fingerprint we reacted to   */
 static char g_build_fp[32];            /* sources the running build sees   */
@@ -103,11 +118,333 @@ static void dir_of(const wchar_t *file, wchar_t *out)
     if(slash) *slash = 0;
 }
 
+/* ---- diagnostics ------------------------------------------------------ */
+/* Only written when LVGLUI_PREVIEW_DEBUG is set. It exists to answer one
+ * question on a machine we cannot see: which mouse messages did the window
+ * actually receive? */
+static void dbg(const char *fmt, ...)
+{
+    va_list ap;
+    FILE *f;
+
+    if(!g_debug || !g_dbg_path[0]) return;
+    f = _wfopen(g_dbg_path, L"a");
+    if(!f) return;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fputc('\n', f);
+    fclose(f);
+}
+
+/* ---- window position -------------------------------------------------- */
+static void save_window_pos(void)
+{
+    RECT r;
+    FILE *f;
+
+    if(!g_hwnd || !g_pos_path[0]) return;
+    if(!GetWindowRect(g_hwnd, &r)) return;
+    f = _wfopen(g_pos_path, L"w");
+    if(!f) return;
+    fprintf(f, "%ld %ld\n", (long)r.left, (long)r.top);
+    fclose(f);
+}
+
+static int load_window_pos(int *x, int *y)
+{
+    FILE *f;
+    long a, b;
+    RECT work;
+    POINT corner;
+
+    if(!g_pos_path[0]) return -1;
+    f = _wfopen(g_pos_path, L"r");
+    if(!f) return -1;
+    if(fscanf(f, "%ld %ld", &a, &b) != 2) { fclose(f); return -1; }
+    fclose(f);
+
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    corner.x = (LONG)a + 32;
+    corner.y = (LONG)b + 32;
+    if(!PtInRect(&work, corner)) return -1;
+    *x = (int)a;
+    *y = (int)b;
+    return 0;
+}
+
+/* ---- cached Visual Studio environment ---------------------------------
+ * build.cmd spends ~1.3s inside vcvars64.bat and another ~0.3s re-running
+ * CMake before ninja does anything. Both costs are per save and both are
+ * avoidable: capture the environment vcvars produces once, then replay it
+ * from a generated batch file, so a rebuild is just "cmd -> cmake --build".
+ * The environment is replayed as text rather than as a CreateProcess block
+ * because a custom lpEnvironment is rejected in some sandboxed contexts. */
+static int capture_vsenv(void)
+{
+    wchar_t cmd[PATH_CAP * 3];
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    DWORD code = 1;
+
+    if(!g_vsenv_path[0] || !g_vcvars[0]) return -1;
+    DeleteFileW(g_vsenv_path);
+    /* cmd /u makes `set` write UTF-16LE, which keeps non-ASCII paths intact */
+    if(swprintf(cmd, PATH_CAP * 3,
+                L"cmd.exe /u /c \"\"%ls\" >nul && set > \"%ls\"\"",
+                g_vcvars, g_vsenv_path) < 0) {
+        return -1;
+    }
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    memset(&pi, 0, sizeof(pi));
+    if(!CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW,
+                       NULL, g_build_dir, &si, &pi)) {
+        return -1;
+    }
+    CloseHandle(pi.hThread);
+    WaitForSingleObject(pi.hProcess, 60 * 1000);
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    return code == 0 ? 0 : -1;
+}
+
+static int env_cmp(const void *a, const void *b)
+{
+    return _wcsicmp(*(const wchar_t *const *)a, *(const wchar_t *const *)b);
+}
+
+/* Batch files are read in the OEM code page, so anything outside printable
+ * ASCII could be mangled. Writing it anyway would hand cmd a corrupt PATH;
+ * skippable values are dropped, toolchain-critical ones abort the fast path. */
+static int is_ascii(const wchar_t *s)
+{
+    for(; *s; ++s) {
+        if(*s < 0x20 || *s > 0x7e) return 0;
+    }
+    return 1;
+}
+
+/* `set "K=V"` with % doubled, so cmd cannot expand anything inside a value. */
+static int put_raw(FILE *f, const wchar_t *s)
+{
+    for(; *s; ++s) fputc((int)*s, f);
+    return 0;
+}
+
+static int put_ascii(FILE *f, const wchar_t *s)
+{
+    if(!is_ascii(s)) return -1;
+    return put_raw(f, s);
+}
+
+/* `set "K=V"` with % doubled, so cmd cannot expand anything inside a value. */
+static int put_assign(FILE *f, const wchar_t *pair)
+{
+    const wchar_t *p;
+
+    if(!is_ascii(pair)) return -1;
+    fputs("set \"", f);
+    for(p = pair; *p; ++p) {
+        if(*p == L'%') fputc('%', f);   /* keep cmd from expanding a value */
+        fputc((int)*p, f);
+    }
+    fputs("\"\r\n", f);
+    return 0;
+}
+
+static int write_fast_cmd(void)
+{
+    FILE *in, *out;
+    long bytes;
+    unsigned char *raw;
+    wchar_t *text, *cursor;
+    wchar_t **items;
+    int count = 0, cap = 0, i, status = 0;
+
+    if(!g_vsenv_path[0] || !g_fast_cmd_path[0] || !g_cmake[0]) return -1;
+
+    in = _wfopen(g_vsenv_path, L"rb");
+    if(!in) return -1;
+    fseek(in, 0, SEEK_END);
+    bytes = ftell(in);
+    fseek(in, 0, SEEK_SET);
+    if(bytes <= 4 || bytes > 4 * 1024 * 1024) { fclose(in); return -1; }
+    raw = (unsigned char *)malloc((size_t)bytes);
+    if(!raw) { fclose(in); return -1; }
+    if(fread(raw, 1, (size_t)bytes, in) != (size_t)bytes) {
+        free(raw);
+        fclose(in);
+        return -1;
+    }
+    fclose(in);
+
+    {
+        size_t off = (bytes >= 2 && raw[0] == 0xFF && raw[1] == 0xFE) ? 2 : 0;
+        size_t len = ((size_t)bytes - off) / 2;
+        text = (wchar_t *)malloc((len + 1) * sizeof(wchar_t));
+        if(!text) { free(raw); return -1; }
+        memcpy(text, raw + off, len * sizeof(wchar_t));
+        text[len] = 0;
+    }
+    free(raw);
+
+    items = (wchar_t **)malloc(256 * sizeof(*items));
+    if(!items) { free(text); return -1; }
+    cap = 256;
+    cursor = text;
+    while(*cursor) {
+        wchar_t *nl = wcschr(cursor, L'\n');
+        size_t len;
+        if(nl) *nl = 0;
+        len = wcslen(cursor);
+        while(len && cursor[len - 1] == L'\r') cursor[--len] = 0;
+        if(len && cursor[0] != L'=') {
+            int skip = 0;
+            const wchar_t *eq = wcschr(cursor, L'=');
+            if(eq) {
+                size_t name = (size_t)(eq - cursor);
+                /* the per-build temp dir is ours, not vcvars's */
+                if(name == 3 && !_wcsnicmp(cursor, L"TMP", 3)) skip = 1;
+                if(name == 4 && !_wcsnicmp(cursor, L"TEMP", 4)) skip = 1;
+            }
+            if(!skip) {
+                if(count == cap) {
+                    wchar_t **grown = (wchar_t **)realloc(items, (size_t)(cap * 2) * sizeof(*items));
+                    if(!grown) { status = -1; break; }
+                    items = grown;
+                    cap *= 2;
+                }
+                items[count++] = cursor;
+            }
+        }
+        if(!nl) break;
+        cursor = nl + 1;
+    }
+
+    out = status == 0 ? _wfopen(g_fast_cmd_path, L"wb") : NULL;
+    if(!out) {
+        free(items);
+        free(text);
+        return -1;
+    }
+
+    qsort(items, (size_t)count, sizeof(*items), env_cmp);
+    fputs("@echo off\r\nsetlocal\r\n", out);
+
+    {
+        wchar_t tmpdir[PATH_CAP + 8];
+        if(status == 0 && join_path(tmpdir, g_build_dir, L"tmp") == 0) {
+            CreateDirectoryW(tmpdir, NULL);
+            if(put_ascii(out, L"set \"TMP=") != 0 || put_ascii(out, tmpdir) != 0) status = -1;
+            else fputs("\"\r\n", out);
+            if(status == 0) {
+                if(put_ascii(out, L"set \"TEMP=") != 0 || put_ascii(out, tmpdir) != 0) status = -1;
+                else fputs("\"\r\n", out);
+            }
+        }
+    }
+
+    for(i = 0; i < count && status == 0; ++i) {
+        if(!is_ascii(items[i])) {
+            /* e.g. some IDE's VM_OPTIONS pointing into a non-ASCII folder.
+             * Harmless for the build, but PATH/INCLUDE/LIB cannot be dropped. */
+            const wchar_t *eq = wcschr(items[i], L'=');
+            size_t name = eq ? (size_t)(eq - items[i]) : 0;
+            int critical = (name == 4 && !_wcsnicmp(items[i], L"PATH", 4))
+                        || (name == 7 && !_wcsnicmp(items[i], L"INCLUDE", 7))
+                        || (name == 7 && !_wcsnicmp(items[i], L"LIBPATH", 7))
+                        || (name == 3 && !_wcsnicmp(items[i], L"LIB", 3));
+            if(critical) status = -1;
+            continue;
+        }
+        if(put_assign(out, items[i]) != 0) status = -1;
+    }
+
+    if(status == 0) {
+        fputs("\"", out);
+        if(put_ascii(out, g_cmake) != 0) status = -1;
+    }
+    if(status == 0) {
+        fputs("\" --build \"", out);
+        if(put_ascii(out, g_build_dir) != 0) status = -1;
+    }
+    if(status == 0) {
+        fputs("\" --target ui\r\n", out);
+    }
+    if(status == 0) fputs("exit /b %ERRORLEVEL%\r\n", out);
+    fclose(out);
+
+    if(status == 0) {
+        g_env_ready = 1;
+    }
+    else {
+        DeleteFileW(g_fast_cmd_path);
+    }
+    free(items);
+    free(text);
+    return status;
+}
+
+static int ensure_vsenv(void)
+{
+    WIN32_FILE_ATTRIBUTE_DATA va, vb;
+    int stale = 1;
+
+    if(g_env_ready) return 0;
+    if(!g_vcvars[0] || !g_vsenv_path[0]) return -1;
+    if(g_env_proc) return -1;   /* capture still running; use the slow path */
+    if(GetFileAttributesExW(g_vsenv_path, GetFileExInfoStandard, &va) &&
+       GetFileAttributesExW(g_vcvars, GetFileExInfoStandard, &vb)) {
+        stale = CompareFileTime(&va.ftLastWriteTime, &vb.ftLastWriteTime) < 0;
+    }
+    if(stale && capture_vsenv() != 0) return -1;
+    return write_fast_cmd();
+}
+
+static void start_env_capture(void)
+{
+    wchar_t cmd[PATH_CAP * 3];
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+
+    if(!g_cmake[0] || !g_vcvars[0] || !g_vsenv_path[0]) return;
+    if(swprintf(cmd, PATH_CAP * 3,
+                L"cmd.exe /u /c \"\"%ls\" >nul && set > \"%ls\"\"",
+                g_vcvars, g_vsenv_path) < 0) {
+        return;
+    }
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    memset(&pi, 0, sizeof(pi));
+    if(!CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW,
+                       NULL, g_build_dir, &si, &pi)) {
+        return;
+    }
+    CloseHandle(pi.hThread);
+    g_env_proc = pi.hProcess;
+}
+
+static void poll_env_capture(void)
+{
+    DWORD code = 1;
+
+    if(!g_env_proc) return;
+    if(WaitForSingleObject(g_env_proc, 0) != WAIT_OBJECT_0) return;
+    GetExitCodeProcess(g_env_proc, &code);
+    CloseHandle(g_env_proc);
+    g_env_proc = NULL;
+    if(code == 0 && write_fast_cmd() == 0) {
+        printf("[host] build environment cached - later rebuilds skip vcvars\n");
+    }
+}
+
 static void usage(void)
 {
     fprintf(stderr,
             "usage: preview.exe --dll <ui.dll> --build-cmd <build.cmd>\n"
             "                   [--project <root>] [--ui-dir <dir>] [--build-dir <dir>]\n"
+            "                   [--cmake <exe>] [--vcvars <bat>]\n"
             "                   [--width <n>] [--height <n>] [--watch <path>]...\n");
 }
 
@@ -305,14 +642,21 @@ static int start_build(const char *fp)
     wchar_t cmd[PATH_CAP * 2 + 64];
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
+    int fast;
 
     if(g_building) return 0;
 
     CreateDirectoryW(g_build_dir, NULL);
+    fast = (g_env_ready || ensure_vsenv() == 0) && g_fast_cmd_path[0] != 0;
+    if(fast) {
+        fast = swprintf(cmd, PATH_CAP * 2 + 64,
+                        L"cmd.exe /c \"\"%ls\" > \"%ls\" 2>&1\"",
+                        g_fast_cmd_path, g_log_path) >= 0;
+    }
     /* One /c command line: cmd.exe /c ""<build-cmd>" > "<build-dir>\build.log" 2>&1"
      * The doubled opening quote and single closing quote are what cmd expects
      * when the executable path itself is quoted. */
-    if(swprintf(cmd, PATH_CAP * 2 + 64,
+    if(!fast && swprintf(cmd, PATH_CAP * 2 + 64,
                 L"cmd.exe /c \"\"%ls\" > \"%ls\" 2>&1\"",
                 g_build_cmd, g_log_path) < 0) {
         printf("[host] build command is too long\n");
@@ -334,6 +678,7 @@ static int start_build(const char *fp)
     g_build_proc = pi.hProcess;
     g_building = 1;
     g_change_pending = 0;
+    g_build_started = GetTickCount();
     snprintf(g_build_fp, sizeof(g_build_fp), "%s", fp);
     set_title(L"building...");
     printf("\n[host] change detected, rebuilding...\n");
@@ -353,6 +698,11 @@ static void finish_build(void)
     CloseHandle(g_build_proc);
     g_build_proc = NULL;
     g_building = 0;
+    if(g_build_started) {
+        printf("[host] build took %lu ms\n",
+               (unsigned long)(GetTickCount() - g_build_started));
+        g_build_started = 0;
+    }
 
     src_fingerprint(now, sizeof(now));
     if(code == 0) {
@@ -461,7 +811,23 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch(msg) {
         case WM_PAINT:  paint(hwnd); return 0;
         case WM_ERASEBKGND: return 1;
-        case WM_DESTROY: PostQuitMessage(0); return 0;
+        case WM_DESTROY: save_window_pos(); PostQuitMessage(0); return 0;
+        case WM_EXITSIZEMOVE: save_window_pos(); break;
+        case WM_NCLBUTTONDOWN: case WM_NCLBUTTONUP:
+        case WM_LBUTTONDOWN: case WM_LBUTTONUP:
+        case WM_ENTERSIZEMOVE: case WM_MOVING: case WM_SIZING:
+            dbg("msg=0x%04X wp=%llu lp=%lld cursor=%ld,%ld",
+                msg, (unsigned long long)wp, (long long)lp,
+                (long)(short)LOWORD(lp), (long)(short)HIWORD(lp));
+            break;
+        case WM_NCHITTEST: {
+            /* Dragging the canvas is the intuitive way to move a 240x320
+             * window, and 1.x has no clickable widgets to steal the press
+             * from. Frame edges still resize through DefWindowProc. */
+            LRESULT hit = DefWindowProcW(hwnd, msg, wp, lp);
+            if(hit == HTCLIENT) hit = HTCAPTION;
+            return hit;
+        }
         case WM_KEYDOWN:
             if(wp == VK_ESCAPE) PostQuitMessage(0);
             return 0;
@@ -504,6 +870,12 @@ static int parse_args(int argc, wchar_t **argv)
         else if(!wcscmp(a, L"--build-cmd")) {
             if(++i >= argc || set_path(g_build_cmd, argv[i]) != 0) return 2;
         }
+        else if(!wcscmp(a, L"--cmake")) {
+            if(++i >= argc || set_path(g_cmake, argv[i]) != 0) return 2;
+        }
+        else if(!wcscmp(a, L"--vcvars")) {
+            if(++i >= argc || set_path(g_vcvars, argv[i]) != 0) return 2;
+        }
         else if(!wcscmp(a, L"--width")) {
             int value;
             if(++i >= argc) return 2;
@@ -545,7 +917,22 @@ int wmain(int argc, wchar_t **argv)
     }
 
     setvbuf(stdout, NULL, _IONBF, 0);   /* keep the log readable while running */
-    SetProcessDPIAware();
+
+    join_path(g_vsenv_path, g_build_dir, L"vsenv.txt");
+    join_path(g_fast_cmd_path, g_build_dir, L"build-fast.cmd");
+    join_path(g_pos_path, g_build_dir, L"preview-window.txt");
+    join_path(g_dbg_path, g_build_dir, L"preview-debug.log");
+    g_debug = _wgetenv(L"LVGLUI_PREVIEW_DEBUG") != NULL;
+
+    {
+        HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        BOOL (WINAPI *set_ctx)(HANDLE) = user32
+            ? (BOOL (WINAPI *)(HANDLE))GetProcAddress(user32, "SetProcessDpiAwarenessContext")
+            : NULL;
+        /* Per-monitor v2 keeps the framebuffer at 1:1 pixels on scaled
+         * desktops; older Windows keeps the coarse system-aware mode. */
+        if(!set_ctx || !set_ctx((HANDLE)-4)) SetProcessDPIAware();
+    }
     make_dib();
 
     WNDCLASSEXW wc;
@@ -578,8 +965,13 @@ int wmain(int argc, wchar_t **argv)
         GetWindowRect(g_hwnd, &wr);
         ww = wr.right - wr.left;
         wh = wr.bottom - wr.top;
-        x = work.left + (work.right - work.left - ww) / 2;
-        y = work.top + (work.bottom - work.top - wh) / 2;
+        /* Reopen where the user left it; only fall back to centering when
+         * there is no remembered position (or it belongs to a monitor that
+         * is no longer there). */
+        if(load_window_pos(&x, &y) != 0) {
+            x = work.left + (work.right - work.left - ww) / 2;
+            y = work.top + (work.bottom - work.top - wh) / 2;
+        }
         SetWindowPos(g_hwnd, HWND_TOP, x, y, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
     }
     SetForegroundWindow(g_hwnd);
@@ -595,6 +987,10 @@ int wmain(int argc, wchar_t **argv)
     else {
         set_title(L"ready");
     }
+
+    /* Capture the VS environment in the background so the first save after
+     * startup already rebuilds without vcvars. */
+    start_env_capture();
 
     LARGE_INTEGER freq, prev;
     QueryPerformanceFrequency(&freq);
@@ -631,6 +1027,7 @@ int wmain(int argc, wchar_t **argv)
             last_file_poll = tick;
             poll_files();
         }
+        poll_env_capture();
         Sleep(8);
     }
 done:

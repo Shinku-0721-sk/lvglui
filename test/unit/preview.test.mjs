@@ -91,6 +91,21 @@ test('previewArgs appends extra watch paths as repeated --watch pairs', () => {
   ]);
 });
 
+test('previewArgs passes the toolchain only when one is known', () => {
+  const ctx = projectCtx();
+
+  assert.equal(previewArgs(ctx).includes('--cmake'), false);
+
+  const withTool = previewArgs(ctx, {
+    toolchain: { vcvars: 'D:/vs/vcvars64.bat', cmake: 'D:/cmake/bin/cmake.exe', ninja: 'D:/ninja/ninja.exe' },
+  });
+  assert.equal(valueOf(withTool, '--cmake'), 'D:/cmake/bin/cmake.exe');
+  assert.equal(valueOf(withTool, '--vcvars'), 'D:/vs/vcvars64.bat');
+  // A partial toolchain is ignored rather than passed half-configured.
+  const partial = previewArgs(ctx, { toolchain: { cmake: 'D:/cmake/bin/cmake.exe' } });
+  assert.equal(partial.includes('--cmake'), false);
+});
+
 test('previewProject reports a failed spawn without an unhandled error', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lvglui-preview-spawn-'));
   const buildDir = path.join(dir, 'build');

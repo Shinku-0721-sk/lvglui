@@ -117,6 +117,13 @@ export function previewArgs(ctx, options = {}) {
   for (const entry of extraWatch) {
     if (typeof entry === 'string' && entry !== '') args.push('--watch', entry);
   }
+
+  // Optional fast-rebuild path: with cmake and vcvars the window captures the
+  // MSVC environment once and then skips vcvars on every later save.
+  const toolchain = validToolchain(opts.toolchain);
+  if (toolchain) {
+    args.push('--cmake', toolchain.cmake, '--vcvars', toolchain.vcvars);
+  }
   return args;
 }
 
@@ -135,9 +142,12 @@ export function previewProject(ctx, options = {}) {
   const problem = projectProblem(ctx);
   if (problem) return failure('ctx', problem);
 
+  const resolved = resolveToolchain(ctx);
+  const toolchain = resolved.ok ? resolved.toolchain : null;
+
   let args;
   try {
-    args = previewArgs(ctx, opts);
+    args = previewArgs(ctx, { ...opts, toolchain });
   } catch (e) {
     return failure('ctx', e.message);
   }
@@ -146,14 +156,8 @@ export function previewProject(ctx, options = {}) {
   const exe = path.join(buildDir, 'preview.exe');
 
   if (!fs.existsSync(exe)) {
-    const buildCtx = { ...ctx, buildDir };
-    if (!validToolchain(buildCtx.toolchain)) {
-      const resolved = resolveToolchain(ctx);
-      if (!resolved.ok) return failure('toolchain', resolved.message, args);
-      buildCtx.toolchain = resolved.toolchain;
-    }
-
-    const build = buildHost(buildCtx);
+    if (!toolchain) return failure('toolchain', resolved.message, args);
+    const build = buildHost({ ...ctx, buildDir, toolchain });
     if (!build.ok) {
       const detail = text(build.stderr).trim();
       const message = `preview.exe build failed (exit ${build.exitCode ?? '?'})`

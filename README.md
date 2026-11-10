@@ -33,7 +33,7 @@ node cli/lvglui.mjs doctor --project D:/my_project
 # 3. 无头渲染 → .lvglui/out/shot.png + tree.json + meta.json
 node cli/lvglui.mjs render --project D:/my_project
 
-# 4. 实时预览窗口（改 UI 保存即重编）
+# 4. 实时预览窗口（改 UI 保存即重编，约 1 秒）
 node cli/lvglui.mjs preview --project D:/my_project
 ```
 
@@ -203,7 +203,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 | `build` | 只编译 host 渲染器 |
 | `watch` | 监听 `uiDir` 的 `.c/.h`，防抖 300ms 后重渲 |
 | `serve` | HTTP + SSE 预览（`127.0.0.1:8765`，占用自动 +1） |
-| `preview` | 打开实时窗口；保存→重编→换 `ui.dll`，失败保留旧画面 |
+| `preview` | 打开实时窗口；保存→重编→换 `ui.dll`，失败保留旧画面；窗口可拖到任意位置并记住 |
 | `init` | 注入 UI 组件骨架和 `lvglui.json` |
 | `font add` | 生成工程字体：默认 labels 子集，`--dynamic common` 常用字大子集，`--dynamic freetype` 运行时 FreeType |
 | `font off` | 移除工程字体、主题挂载和 CMake 条目 |
@@ -233,6 +233,13 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 - `--name ui_font_xxx`：生成字体符号名
 
 退出码：`0` 成功，`1` 构建/渲染失败，`2` 用法/配置错误，`3` 运行时/IO 错误。
+
+### 实时预览的细节
+
+- **窗口拖到哪就是哪**：整块画面都能当标题栏拖（1.x 没有可点的控件），松手后位置记在 `.lvglui/build/preview-window.txt`，下次 `preview` 原位打开。
+- **保存到刷新约 1 秒**：第一次启动会把 `vcvars64.bat` 的环境缓存成 `.lvglui/build/build-fast.cmd`，之后每次保存只跑 `cmake --build --target ui`，省掉 1.3 秒的 vcvars 和 0.3 秒的 configure。文件轮询 50ms、防抖 100ms。
+- 构建失败时窗口保留旧画面，标题变成 `reload failed (see build.log)`，不会每 100ms 重试刷屏。
+- 想看鼠标/移动事件，设 `LVGLUI_PREVIEW_DEBUG=1`，日志写到 `.lvglui/build/preview-debug.log`。
 
 ## 在 DSH 里用
 
