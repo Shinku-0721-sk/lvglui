@@ -189,14 +189,21 @@ export function previewProject(ctx, options = {}) {
 
   // Rebuild the launcher when the tool's own host sources changed, otherwise a
   // project that already has a preview.exe keeps the old window behaviour.
-  if (!fs.existsSync(exe) || toolSourcesNewer(exe, ctx.toolDir)) {
-    if (!toolchain) return failure('toolchain', resolved.message, args);
-    const build = buildHost({ ...ctx, buildDir, toolchain });
-    if (!build.ok) {
-      const detail = text(build.stderr).trim();
-      const message = `preview.exe build failed (exit ${build.exitCode ?? '?'})`
-        + (detail ? `: ${tail(detail)}` : '');
-      return failure('build', message, args);
+  // A rebuild can fail for mundane reasons (a window is already running and
+  // holds the exe open); in that case an existing binary is still usable.
+  const hadExe = fs.existsSync(exe);
+  if (!hadExe || toolSourcesNewer(exe, ctx.toolDir)) {
+    if (!toolchain) {
+      if (!hadExe) return failure('toolchain', resolved.message, args);
+    } else {
+      const build = buildHost({ ...ctx, buildDir, toolchain });
+      if (!build.ok) {
+        const detail = text(build.stderr).trim();
+        const message = `preview.exe build failed (exit ${build.exitCode ?? '?'})`
+          + (detail ? `: ${tail(detail)}` : '');
+        if (!hadExe) return failure('build', message, args);
+        console.error(`[lvglui] 启动器重建失败，先用旧的 preview.exe：${message}`);
+      }
     }
     if (!fs.existsSync(exe)) {
       return failure('build', `preview.exe not found after build: ${exe}`, args);
