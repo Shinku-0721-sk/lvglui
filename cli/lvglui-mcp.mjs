@@ -255,7 +255,7 @@ async function callTool(name, args = {}) {
   }
 
   if (name === 'doctor') {
-    const ctx = load(project, true, args);
+    const ctx = load(project, false, args);
     if (!ctx.ok) return errorResult('工程探测失败', { problems: ctx.problems });
     const tc = resolveToolchain(ctx);
     const d = runDoctor(ctx, { toolchain: tc.ok ? tc.toolchain : undefined });

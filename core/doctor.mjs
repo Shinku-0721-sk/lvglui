@@ -163,19 +163,38 @@ function checkDisplay(ctx) {
 }
 
 function checkUiDir(ctx) {
+  const configured = typeof ctx?.configFile === 'string' && ctx.configFile !== '';
   if (typeof ctx?.uiDir !== 'string' || ctx.uiDir === '' || !isDirectory(ctx.uiDir)) {
-    return makeCheck('uiDir', 'fail', `UI 目录不存在：${ctx?.uiDir ?? '(未设置)'}`);
+    // Running doctor before init is a supported first step: the environment is
+    // fine, the UI simply has not been injected yet. A lvglui.json that points
+    // at a missing directory is a real problem, though.
+    if (configured) {
+      return makeCheck('uiDir', 'fail', `lvglui.json 里的 UI 目录不存在：${ctx?.uiDir ?? '(未设置)'}`);
+    }
+    return makeCheck(
+      'uiDir',
+      'warn',
+      `还没找到 UI 目录（${ctx?.uiDir ?? '未设置'}）；下一步：lvglui init --project <root> --width <w> --height <h>`,
+    );
   }
   const sources = Array.isArray(ctx.sources) ? ctx.sources : [];
   if (sources.length === 0) {
-    return makeCheck('uiDir', 'fail', `UI 目录下没有 C 源文件：${ctx.uiDir}`);
+    return makeCheck('uiDir', 'warn', `UI 目录下还没有 C 源文件：${ctx.uiDir}（用 init 生成骨架，或把已有页面放进来）`);
   }
   return makeCheck('uiDir', 'ok', `UI 目录：${ctx.uiDir}（${sources.length} 个源文件）`);
 }
 
 function checkEntry(ctx) {
+  const configured = typeof ctx?.configFile === 'string' && ctx.configFile !== '';
   if (typeof ctx?.entry !== 'string' || !ENTRY_RE.test(ctx.entry)) {
-    return makeCheck('entry', 'fail', `UI 入口符号无效：${JSON.stringify(ctx?.entry ?? null)}`);
+    if (configured) {
+      return makeCheck('entry', 'fail', `lvglui.json 里的 UI 入口无效：${JSON.stringify(ctx?.entry ?? null)}`);
+    }
+    return makeCheck(
+      'entry',
+      'warn',
+      `UI 入口未确定（${JSON.stringify(ctx?.entry ?? null)}）；init 会写入 ui_start`,
+    );
   }
   return makeCheck('entry', 'ok', `UI 入口：${ctx.entry}`);
 }

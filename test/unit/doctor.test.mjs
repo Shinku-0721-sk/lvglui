@@ -40,6 +40,34 @@ function ctx(t, uiSource, { cmake = null, sdkconfig = {} } = {}) {
 
 const CLEAN_UI = '#include "lvgl.h"\nvoid ui_start(void){}\n';
 
+test('doctor before init warns on uiDir/entry instead of failing', (t) => {
+  const project = ctx(t, CLEAN_UI);
+  // Nothing injected yet: no config file, no entry, no UI directory at all.
+  project.configFile = null;
+  project.uiDir = '';
+  project.entry = '';
+  project.sources = [];
+
+  const r = doctor(project, { toolchain: { ok: true } });
+
+  assert.equal(r.ok, true);
+  const byId = new Map(r.checks.map((c) => [c.id, c]));
+  assert.equal(byId.get('uiDir').status, 'warn');
+  assert.match(byId.get('uiDir').message, /lvglui init/);
+  assert.equal(byId.get('entry').status, 'warn');
+});
+
+test('a config that points at a missing uiDir is a fail', (t) => {
+  const project = ctx(t, CLEAN_UI);
+  project.configFile = path.join(project.root, 'lvglui.json');
+  project.uiDir = path.join(project.root, 'components', 'gone');
+
+  const r = doctor(project, { toolchain: { ok: true } });
+
+  assert.equal(r.ok, false);
+  assert.ok(r.problems.some((p) => p.id === 'uiDir'));
+});
+
 test('platform header include is a fail', (t) => {
   const project = ctx(t, '#include "driver/gpio.h"\nvoid ui_start(void){}\n');
   const r = doctor(project, { toolchain: { ok: true } });

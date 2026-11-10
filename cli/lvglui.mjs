@@ -226,6 +226,18 @@ function printDiagnostics(diagnostics) {
   }
 }
 
+// Doctor details can be objects (e.g. the font check reports the missing file
+// and the expected macro); console.log would otherwise print [object Object].
+function formatDetail(detail) {
+  if (typeof detail === 'string') return detail;
+  if (detail === null || typeof detail !== 'object') return String(detail);
+  try {
+    return JSON.stringify(detail);
+  } catch {
+    return String(detail);
+  }
+}
+
 function reportRenderFailure(result) {
   const stage = result.error?.stage ?? 'unknown';
   console.error(`[lvglui] render failed (${stage}): ${result.error?.message ?? 'unknown error'}`);
@@ -239,7 +251,7 @@ function loadFor(command, flags) {
     projectDir: flags.project,
     cliWidth: flags.width,
     cliHeight: flags.height,
-    requireUi: command !== 'init',
+    requireUi: command !== 'init' && command !== 'doctor',
   });
 }
 
@@ -258,7 +270,7 @@ function printChecks(checks, { json = false } = {}) {
     const line = `[${check.status}] ${check.id}: ${check.message}`;
     if (check.status === 'fail') console.error(line);
     else console.log(line);
-    if (check.detail && !json) console.log(`       ${check.detail}`);
+    if (check.detail && !json) console.log(`       ${formatDetail(check.detail)}`);
   }
 }
 
@@ -447,7 +459,7 @@ async function runDoctor(flags) {
       }
       console.error(`[lvglui] [${check.status ?? 'fail'}] ${check.id ?? '?'}: ${check.message ?? ''}`);
       const detail = check.detail === undefined ? [] : (Array.isArray(check.detail) ? check.detail : [check.detail]);
-      for (const line of detail) console.error(`       ${line}`);
+      for (const line of detail) console.error(`       ${formatDetail(line)}`);
     }
   } else {
     for (const warning of ctx.warnings ?? []) console.error(`[lvglui] warning: ${warning}`);

@@ -24,11 +24,11 @@
 ## 快速开始
 
 ```bash
-# 1. 在现有工程里注入 UI 组件（只新增文件，不改现有文件）
-node cli/lvglui.mjs init --project D:/my_project --width 240 --height 320
+# 1. 检查工程/LVGL/IDF/工具链（还没注入 UI 时只给 warn 和下一步提示，不算失败）
+node cli/lvglui.mjs doctor --project D:/my_project --width 240 --height 320
 
-# 2. 检查工程/LVGL/IDF/工具链
-node cli/lvglui.mjs doctor --project D:/my_project
+# 2. 在现有工程里注入 UI 组件（只新增文件，不改现有文件）
+node cli/lvglui.mjs init --project D:/my_project --width 240 --height 320
 
 # 3. 无头渲染 → .lvglui/out/shot.png + tree.json + meta.json
 node cli/lvglui.mjs render --project D:/my_project
@@ -208,7 +208,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 | `font add` | 生成工程字体：默认 labels 子集，`--dynamic common` 常用字大子集，`--dynamic freetype` 运行时 FreeType |
 | `font off` | 移除工程字体、主题挂载和 CMake 条目 |
 | `font status` | 查看字体模式、字符数和缺字 |
-| `doctor` | 检查工程、IDF/LVGL 版本、工具链、显示配置、平台头 |
+| `doctor` | 检查工程、IDF/LVGL 版本、工具链、显示配置、平台头（可以在 `init` 之前跑：UI 还没注入时给 warn 和下一步提示） |
 | `dsh install` | 生成 DSH bundle 用的 `dsh/cordis.patch.yml` 并打印安装命令 |
 | `help` | 帮助 |
 
