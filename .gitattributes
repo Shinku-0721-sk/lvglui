@@ -1,0 +1,14 @@
+# Keep text files LF in the repository and in every checkout, so builds and
+# tests see the same bytes on Windows, Linux and CI. Batch files stay CRLF:
+# cmd.exe expects it for labels and line continuation.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets: never convert.
+*.png binary
+*.jpg binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary

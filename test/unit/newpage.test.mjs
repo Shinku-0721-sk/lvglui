@@ -187,7 +187,7 @@ test('newPage repairs a missing comma on the last entry', () => {
     const result = newPage({ root: project.root, uiDir: project.uiDir }, { name: 'settings' });
     assert.equal(result.ok, true, result.problems?.join('; '));
     const table = read(project.table);
-    assert.match(table, /\{ "home", ui_page_home_create \},\n/);
+    assert.match(table, /\{ "home", ui_page_home_create \},\r?\n/);
     assert.match(table, /\{ "settings", ui_page_settings_create \},/);
     assert.doesNotMatch(table, /,,\s*\{ "settings"/);
   } finally {
