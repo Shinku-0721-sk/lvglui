@@ -35,7 +35,7 @@ description: 在 ESP-IDF 6.x + LVGL 9.x 工程里编写或调整 UI 页面：用
    - 图片用来看溢出、对齐、颜色、中文是否正确；
    - 有编译错误先按 `diagnostics` 第一条修，不要猜 LVGL API。
 8. 改完再 render，直到截图合理；最后报告改了哪些文件、截图路径、剩余 warning。
-9. 多页界面：如果 UI 组件实现了 `ui_page_count/ui_page_name/ui_page_show`，用 `render_ui` 的 `allPages:true` 一次看全部页（返回 contact sheet，每页图在 `pages[]`），或用 `page:"<name>"` 单看一页。页面表在 `<uiDir>/src/ui_pages.c`，新增页只往表里加一行 + 加 `include/pages/x.h` 与 `src/pages/x.c`。
+9. 多页界面：如果 UI 组件实现了 `ui_page_count/ui_page_name/ui_page_show`，用 `render_ui` 的 `allPages:true` 一次看全部页（返回 contact sheet，每页图在 `pages[]`），或用 `page:"<name>"` 单看一页。页面表在 `<uiDir>/src/ui_pages.c`，新增页只往表里加一行 + 加 `include/pages/x.h` 与 `src/pages/x.c`。页面里创建的 `lv_timer`/`lv_anim` 不随屏幕对象销毁：如果这个页面可能被销毁，把句柄存下来，在页面根的 `LV_EVENT_DELETE` 里 `lv_timer_delete`/`lv_anim_delete`；或者只让回调写数据，不直接抓页面内控件。
 10. 用户想边改边看时调 `mcp__lvglui__preview_ui`（需要看得见就传 `topmost:true` 让它置顶）；保存 UI 源码后窗口约 1 秒自动重建并刷新，失败会保留上一版画面。
 
 ## 业务边界（硬约束）

@@ -141,6 +141,7 @@ lvglui render --page settings      # 只渲染这一页，仍写 shot.png / tree
 - `meta.json` 里 `pages[]` 有每页的 `name/png/sha256/bytes/nodes`，`allPages: true`
 - 一个 `_page_` 函数都不实现时，行为与今天完全一致；只实现一部分会直接报“契约不完整”，不会拖到链接期
 - 每页单独起一个 `shot.exe` 进程，避免复用 LVGL 引擎产生悬空指针
+- 页面里自己创建的 `lv_timer`/`lv_anim` 不会随屏幕对象销毁：如果页面可能被销毁（设备侧切页、任何删屏逻辑），把句柄存下来并在页面根的 `LV_EVENT_DELETE` 里删掉，或只让回调写数据、不直接抓页面内控件。预览窗口会缓存页面、不删旧屏，正是为了兼容这类工程
 
 `init` 生成的模板自带 `ui_pages.c`（默认一页 `home`）。用 `new` 加页面会自动生成 `include/pages/<name>.h` 和 `src/pages/<name>.c`，把注册行追加到页面表末尾，并在组件用显式 `SRCS` 时把新 `.c` 加进 `CMakeLists.txt`。改动前备份到 `.lvglui/backup/`；页面表或 `CMakeLists.txt` 的结构不认识时直接报错，不会猜着改，失败会自动回滚。只支持 `init` 生成的模板（页面表是单行 `{ "name", ui_page_xxx_create },` 形式）。
 
