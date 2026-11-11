@@ -16,6 +16,8 @@ import { doctor } from '../core/doctor.mjs';
 import { buildHost, writeBuildScript } from '../core/build.mjs';
 import { previewProject } from '../core/preview.mjs';
 import { initProject } from '../core/init.mjs';
+import { newPage } from '../core/newpage.mjs';
+import { discoverProject } from '../core/discover.mjs';
 import { readText } from '../core/fsutil.mjs';
 import { fontAdd, fontOff, fontStatus, FONT_PRESET, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../core/font.mjs';
 import { parseDiagnostics } from '../core/diagnostics.mjs';
@@ -30,6 +32,7 @@ const COMMANDS = new Set([
   'serve',
   'preview',
   'init',
+  'new',
   'doctor',
   'dsh install',
   'font off',
@@ -62,6 +65,7 @@ const KNOWN_FLAGS = new Set([
   'freetypeDir',
   'page',
   'allPages',
+  'dryRun',
   'help',
 ]);
 
@@ -80,6 +84,7 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   serve        启动 HTTP 预览（127.0.0.1:8765，端口占用时自动 +1）
   preview      打开实时预览窗口
   init         在现有 ESP-IDF 工程中创建 UI 组件
+  new <name>   在模板工程里新增一个页面，并注册到页面表
   doctor       检查工程 / 工具链 / 显示配置
   font add     生成工程字体子集（默认 tools 内置 Noto Sans SC）
   font off     移除生成的字体与 theme 接入
@@ -97,7 +102,8 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   --topmost        实时预览窗口置顶（Ctrl+Alt+T 也可以随时切换）
   --page <name>     只渲染某一页（需要界面实现 ui_page_* 契约）
   --all-pages       渲染所有页，另出一张 shot-sheet.png 总览
-  --json            render / build / doctor 只向 stdout 输出结果 JSON，日志走 stderr
+  --dry-run         new 只报告会改哪些文件，不落盘
+  --json            render / build / doctor / new 只向 stdout 输出结果 JSON，日志走 stderr
   --force           init 兼容参数（v1 不覆盖已有文件）
   --no-render       init 后不做空白页渲染
   --port <n>        serve 起始端口（默认 8765）
@@ -305,7 +311,11 @@ function validationProblem(command, flags, positionals) {
   for (const key of Object.keys(flags)) {
     if (!KNOWN_FLAGS.has(key)) return `未知选项: --${key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`;
   }
-  if (positionals.length > 0) {
+  if (command === 'new') {
+    if (positionals.length === 0) return 'new 需要一个页名: lvglui new <name>';
+    if (positionals.length > 1) return `new 只接受一个页名: ${positionals.join(' ')}`;
+  }
+  if (positionals.length > 0 && command !== 'new') {
     if (command === 'dsh install') return `dsh install 不接受额外参数: ${positionals.join(' ')}`;
     if (command === 'font add') {
       if (positionals.length > 1) return `font add 最多接受一个字体路径: ${positionals.join(' ')}`;
@@ -523,6 +533,44 @@ async function runInit(flags) {
 
   reportRenderFailure(rendered);
   return exitForRender(rendered);
+}
+
+async function runNew(flags, positionals) {
+  // `new` only needs the project root and the UI directory; a display config
+  // is not required yet, so use discovery instead of loadContext.
+  const discovery = discoverProject(flags.project, { toolRoot: TOOL_DIR, requireUi: false });
+  if (!discovery.uiDir) {
+    const problems = discovery.problems.length > 0 ? discovery.problems : ['没有找到 UI 目录'];
+    for (const problem of problems) console.error(`[lvglui] ${problem}`);
+    if (flags.json) writeJson({ ok: false, stage: 'ctx', root: discovery.root ?? null, problems });
+    return 2;
+  }
+
+  const result = newPage(discovery, { name: positionals[0], dryRun: flags.dryRun === true });
+  if (!result.ok) {
+    for (const problem of result.problems) console.error(`[lvglui] ${problem}`);
+    if (flags.json) {
+      writeJson({ ok: false, stage: result.stage, root: discovery.root, page: positionals[0], problems: result.problems });
+    }
+    return result.stage === 'io' ? 3 : 2;
+  }
+
+  if (flags.json) {
+    writeJson(result);
+    for (const warning of result.warnings) console.error(`[lvglui] warning: ${warning}`);
+    return 0;
+  }
+
+  const verb = result.dryRun ? 'would add' : 'added';
+  console.log(`[lvglui] ${verb} page "${result.page}" (${result.pages.before} -> ${result.pages.after} pages)`);
+  for (const created of result.created) console.log(`  + ${created}`);
+  for (const updated of result.updated) console.log(`  ~ ${updated}`);
+  if (result.backups.length > 0) {
+    for (const backup of result.backups) console.log(`[lvglui] backup: ${backup}`);
+  }
+  for (const warning of result.warnings) console.error(`[lvglui] warning: ${warning}`);
+  if (!result.dryRun) console.log('[lvglui] 下一步: node cli/lvglui.mjs render --all-pages');
+  return 0;
 }
 
 async function runPreview(flags) {
@@ -995,6 +1043,9 @@ export async function main(argv = process.argv.slice(2)) {
         break;
       case 'init':
         code = await runInit(flags);
+        break;
+      case 'new':
+        code = await runNew(flags, positionals);
         break;
       case 'preview':
         code = await runPreview(flags);

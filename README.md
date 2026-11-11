@@ -30,10 +30,13 @@ node cli/lvglui.mjs doctor --project D:/my_project --width 240 --height 320
 # 2. 在现有工程里注入 UI 组件（只新增文件，不改现有文件）
 node cli/lvglui.mjs init --project D:/my_project --width 240 --height 320
 
-# 3. 无头渲染 → .lvglui/out/shot.png + tree.json + meta.json
+# 3.（可选）在模板工程里加一个页面：生成 .c/.h，追加注册行并更新 CMakeLists
+node cli/lvglui.mjs new settings --project D:/my_project
+
+# 4. 无头渲染 → .lvglui/out/shot.png + tree.json + meta.json
 node cli/lvglui.mjs render --project D:/my_project
 
-# 4. 实时预览窗口（改 UI 保存即重编，约 1 秒）
+# 5. 实时预览窗口（改 UI 保存即重编，约 1 秒）
 node cli/lvglui.mjs preview --project D:/my_project
 ```
 
@@ -139,7 +142,7 @@ lvglui render --page settings      # 只渲染这一页，仍写 shot.png / tree
 - 一个 `_page_` 函数都不实现时，行为与今天完全一致；只实现一部分会直接报“契约不完整”，不会拖到链接期
 - 每页单独起一个 `shot.exe` 进程，避免复用 LVGL 引擎产生悬空指针
 
-`init` 生成的模板自带 `ui_pages.c`（默认一页 `home`），新增页面只需往页面表里加一行。
+`init` 生成的模板自带 `ui_pages.c`（默认一页 `home`）。用 `new` 加页面会自动生成 `include/pages/<name>.h` 和 `src/pages/<name>.c`，把注册行追加到页面表末尾，并在组件用显式 `SRCS` 时把新 `.c` 加进 `CMakeLists.txt`。改动前备份到 `.lvglui/backup/`；页面表或 `CMakeLists.txt` 的结构不认识时直接报错，不会猜着改，失败会自动回滚。只支持 `init` 生成的模板（页面表是单行 `{ "name", ui_page_xxx_create },` 形式）。
 
 ## 中文字体
 
@@ -210,6 +213,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 | `serve` | HTTP + SSE 预览（`127.0.0.1:8765`，占用自动 +1） |
 | `preview` | 打开实时窗口；保存→重编→换 `ui.dll`，失败保留旧画面；窗口可拖到任意位置并记住；`--topmost` 置顶 |
 | `init` | 注入 UI 组件骨架和 `lvglui.json` |
+| `new <name>` | 在 `init` 的模板工程里新增页面：生成 `.c/.h`、追加页面表、同步显式 `SRCS`；写前备份，失配即报错 |
 | `font add` | 生成工程字体：默认 labels 子集，`--dynamic common` 常用字大子集，`--dynamic freetype` 运行时 FreeType |
 | `font off` | 移除工程字体、主题挂载和 CMake 条目 |
 | `font status` | 查看字体模式、字符数和缺字 |
@@ -227,8 +231,9 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 - `--page <name>`：只渲染某一页（需要 `ui_page_*` 契约）
 - `--all-pages`：渲染所有页，另出 `shot-sheet.png` 总览
 - `--topmost`：`preview` 窗口置顶（开着窗口时也可随时按 `Ctrl+Alt+T` 切换）
-- `--json`：`render/build/doctor` 只向 stdout 输出 JSON，日志走 stderr
+- `--json`：`render/build/doctor/new` 只向 stdout 输出 JSON，日志走 stderr
 - `--no-render`：`init` 后不做空白页渲染
+- `--dry-run`：`new` 只报告会创建/修改哪些文件，不落盘
 - `--preset noto-sans-sc`：`font add` 使用工具自带字体
 - `--size 8..64`：字体像素大小
 - `--chars "保存"`：额外加入字体的字符（仍会合并 UI 字符串）
