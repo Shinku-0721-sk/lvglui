@@ -53,6 +53,15 @@ test('previewArgs pins the window only when asked', () => {
   assert.equal(on.length, off.length + 1);
 });
 
+test('previewArgs starts on the requested page and ignores an empty name', () => {
+  const withPage = previewArgs(projectCtx(), { page: 'settings', topmost: true });
+  assert.equal(valueOf(withPage, '--page'), 'settings');
+  assert.equal(withPage[withPage.length - 1], '--topmost');
+
+  const empty = previewArgs(projectCtx(), { page: '' });
+  assert.equal(empty.includes('--page'), false);
+});
+
 test('previewArgs never emits the legacy exe-relative paths', () => {
   const ctx = projectCtx();
   const args = previewArgs(ctx);

@@ -120,9 +120,11 @@ function toolSourcesNewer(exePath, toolDir) {
  * Build the preview.exe argv array. Pure: no filesystem access, no spawn.
  *
  * @param {object} ctx shared project context from `loadContext`
- * @param {{buildCmd?: string, extraWatch?: string[]}} [options]
+ * @param {{buildCmd?: string, extraWatch?: string[], page?: string,
+ *   toolchain?: object, topmost?: boolean}} [options]
  *   `buildCmd` defaults to `<buildDir>/build.cmd`; `extraWatch` entries are
- *   passed as repeated `--watch` pairs so the C side watches them too.
+ *   passed as repeated `--watch` pairs so the C side watches them too;
+ *   `page` opens that page first instead of the entry screen.
  * @returns {string[]}
  */
 export function previewArgs(ctx, options = {}) {
@@ -157,6 +159,13 @@ export function previewArgs(ctx, options = {}) {
     args.push('--cmake', toolchain.cmake, '--vcvars', toolchain.vcvars);
   }
 
+  // Start on a specific page when the UI exposes the multi-page contract.
+  // The window resolves the name itself so a typo is reported there with the
+  // list of pages the UI actually has.
+  if (typeof opts.page === 'string' && opts.page !== '') {
+    args.push('--page', opts.page);
+  }
+
   // Keep the preview above the editor while the user writes UI code.
   if (opts.topmost === true) args.push('--topmost');
   return args;
@@ -168,7 +177,8 @@ export function previewArgs(ctx, options = {}) {
  * (resolving the MSVC toolchain on demand when the context has none).
  *
  * @param {object} ctx shared project context from `loadContext`
- * @param {{buildCmd?: string, extraWatch?: string[]}} [options]
+ * @param {{buildCmd?: string, extraWatch?: string[], page?: string,
+ *   topmost?: boolean}} [options]
  * @returns {{ok: boolean, pid: number|null, args: string[],
  *   error: {stage: string, message: string}|null}}
  */

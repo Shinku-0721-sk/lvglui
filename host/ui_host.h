@@ -49,6 +49,11 @@ UI_EXPORT int         ui_page_total(void);
 UI_EXPORT const char *ui_page_name_at(int index);
 /* Select the page the next ui_attach builds. -1 means "use LVGLUI_ENTRY". */
 UI_EXPORT int         ui_set_page(int index);
+/* Resolve a page name to its index; -1 when the contract or the name is absent. */
+UI_EXPORT int         ui_page_index(const char *name);
+/* Rebuild the live UI on another page, deleting the previous screen. The
+ * caller must be attached; -1 means "no contract / bad index / build failed". */
+UI_EXPORT int         ui_goto_page(int index);
 
 #ifdef __cplusplus
 }

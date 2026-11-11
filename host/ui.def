@@ -4,3 +4,8 @@ EXPORTS
     ui_tick
     ui_pixels
     ui_detach
+    ui_page_total
+    ui_page_name_at
+    ui_set_page
+    ui_page_index
+    ui_goto_page

@@ -48,6 +48,18 @@ static int                    (*p_attach)(int, int);
 static int                    (*p_tick)(uint32_t);
 static const void *           (*p_pixels)(int *, int *, uint32_t *);
 static void                   (*p_detach)(void);
+static int                    (*p_page_total)(void);
+static const char *           (*p_page_name)(int);
+static int                    (*p_page_index)(const char *);
+static int                    (*p_set_page)(int);
+static int                    (*p_goto_page)(int);
+
+/* Page navigation (optional ui_page_* contract). g_page_index -1 means the
+ * entry function chose the screen; names are kept in UTF-8 for the ABI. */
+static wchar_t g_page_request[128];    /* --page: a page name or a 1-based page number */
+static int     g_page_index = -1;
+static char    g_page_name[64];
+static int     g_page_total;
 
 /* ---- paths ---------------------------------------------------------- */
 static wchar_t g_dll_src[PATH_CAP];    /* --dll: ui.dll the build writes   */
@@ -103,6 +115,26 @@ static int set_path(wchar_t *dst, const wchar_t *src)
     if(n >= PATH_CAP) return -1;
     memcpy(dst, src, (n + 1) * sizeof(wchar_t));
     return 0;
+}
+
+/* Page names cross the ABI as UTF-8 C strings; the window needs them for the
+ * title bar, so keep the conversion in one place. */
+static int utf8_to_wide(const char *src, wchar_t *dst, int cap)
+{
+    int n;
+    if(!src || !dst || cap <= 0) return 0;
+    n = MultiByteToWideChar(CP_UTF8, 0, src, -1, dst, cap);
+    if(n <= 0) dst[0] = 0;
+    return n > 0 ? n - 1 : 0;
+}
+
+static int wide_to_utf8(const wchar_t *src, char *dst, int cap)
+{
+    int n;
+    if(!src || !dst || cap <= 0) return 0;
+    n = WideCharToMultiByte(CP_UTF8, 0, src, -1, dst, cap, NULL, NULL);
+    if(n <= 0) dst[0] = 0;
+    return n > 0 ? n - 1 : 0;
 }
 
 static int join_path(wchar_t *out, const wchar_t *a, const wchar_t *b)
@@ -455,7 +487,8 @@ static void usage(void)
             "usage: preview.exe --dll <ui.dll> --build-cmd <build.cmd>\n"
             "                   [--project <root>] [--ui-dir <dir>] [--build-dir <dir>]\n"
             "                   [--cmake <exe>] [--vcvars <bat>]\n"
-            "                   [--width <n>] [--height <n>] [--topmost] [--watch <path>]...\n");
+            "                   [--width <n>] [--height <n>] [--topmost] [--page <name>]\n"
+            "                   [--watch <path>]...\n");
 }
 
 /* ---- fingerprint ----------------------------------------------------- */
@@ -561,12 +594,29 @@ static unsigned long long dll_stamp(void)
 /* ---- title ----------------------------------------------------------- */
 static void set_title(const wchar_t *state)
 {
-    wchar_t title[320];
+    wchar_t title[400];
+    wchar_t page[192] = L"";
+    wchar_t label[64];
     if(state) {
         lstrcpynW(g_title_state, state, 128);
     }
-    swprintf(title, 320, L"LVGL Preview %dx%d  -  %ls  (Esc to quit)%ls",
-             g_w, g_h, g_title_state, g_topmost ? L"  [topmost]" : L"");
+    if(g_page_total > 0) {
+        if(g_page_index >= 0) {
+            label[0] = 0;
+            if(g_page_name[0]) utf8_to_wide(g_page_name, label, 64);
+            swprintf(page, 192, L"  -  page %d/%d%s%ls",
+                     g_page_index + 1, g_page_total,
+                     label[0] ? L" " : L"", label);
+        }
+        else {
+            swprintf(page, 192, L"  -  entry (%d pages)", g_page_total);
+        }
+        if(g_page_total > 1) {
+            wcsncat(page, L"  [PgUp/PgDn]", 191 - wcslen(page));
+        }
+    }
+    swprintf(title, 400, L"LVGL Preview %dx%d  -  %ls%ls  (Esc to quit)%ls",
+             g_w, g_h, g_title_state, page, g_topmost ? L"  [topmost]" : L"");
     if(g_hwnd) SetWindowTextW(g_hwnd, title);
 }
 
@@ -579,6 +629,32 @@ static void apply_topmost(void)
     set_title(NULL);
 }
 
+/* ---- page navigation -------------------------------------------------- */
+static void goto_page(int index)
+{
+    const char *name;
+    if(!p_goto_page || g_page_total <= 0) return;
+    if(index < 0 || index >= g_page_total) return;
+    if(p_goto_page(index) != 0) return;
+
+    g_page_index = index;
+    name = p_page_name ? p_page_name(index) : NULL;
+    if(name && name[0]) snprintf(g_page_name, sizeof(g_page_name), "%s", name);
+    else g_page_name[0] = 0;
+
+    InvalidateRect(g_hwnd, NULL, FALSE);
+    set_title(NULL);
+}
+
+static void step_page(int delta)
+{
+    int next;
+    if(g_page_total <= 1) return;
+    if(g_page_index < 0) next = delta > 0 ? 0 : g_page_total - 1;
+    else next = (g_page_index + delta + g_page_total) % g_page_total;
+    goto_page(next);
+}
+
 /* ---- DLL lifecycle --------------------------------------------------- */
 static void unload_ui(void)
 {
@@ -587,6 +663,9 @@ static void unload_ui(void)
         FreeLibrary(g_dll);
         g_dll = NULL;
         p_attach = NULL; p_tick = NULL; p_pixels = NULL; p_detach = NULL;
+        p_page_total = NULL; p_page_name = NULL; p_page_index = NULL;
+        p_set_page = NULL; p_goto_page = NULL;
+        g_page_total = 0;
     }
     if(g_live_path[0]) {
         DeleteFileW(g_live_path);
@@ -606,6 +685,9 @@ static int load_ui(void)
     const void *(*pixels)(int *, int *, uint32_t *);
     void (*detach)(void);
     DWORD err;
+    int total = 0;
+    int initial = 0;
+    int requested = -1;
 
     if(!g_dll_src[0] || !g_build_dir[0]) return -1;
     swprintf(live, PATH_CAP, L"%ls\\ui_live_%u.dll", g_build_dir, ++g_live_seq);
@@ -634,11 +716,90 @@ static int load_ui(void)
         return -1;
     }
 
+    /* The page exports are optional: a ui.dll built without the multi-page
+       contract simply has no pages, and the window keeps its old behaviour. */
+    p_page_total = (int (*)(void))          GetProcAddress(lib, "ui_page_total");
+    p_page_name  = (const char *(*)(int))   GetProcAddress(lib, "ui_page_name_at");
+    p_page_index = (int (*)(const char *))  GetProcAddress(lib, "ui_page_index");
+    p_set_page   = (int (*)(int))           GetProcAddress(lib, "ui_set_page");
+    p_goto_page  = (int (*)(int))           GetProcAddress(lib, "ui_goto_page");
+
+    /* Resolve the page before attach so the very first screen is the one the
+       user asked for; on hot reload the page they are looking at wins. */
+    total = p_page_total ? p_page_total() : 0;
+    initial = (g_dll == NULL);
+    requested = -1;
+    if(g_page_request[0]) {
+        if(total > 0) {
+            wchar_t *end = NULL;
+            long numeric = wcstol(g_page_request, &end, 10);
+            /* Numbers follow the title and the 1-9 keys: page 2 means index 1. */
+            if(end && *end == 0 && end != g_page_request) {
+                requested = (numeric >= 1 && numeric <= total) ? (int)numeric - 1 : -1;
+            }
+            else {
+                char name[160];
+                wide_to_utf8(g_page_request, name, sizeof(name));
+                requested = p_page_index ? p_page_index(name) : -1;
+            }
+        }
+    }
+    else if(g_page_index >= 0 && total > 0) {
+        if(g_page_name[0] && p_page_index) requested = p_page_index(g_page_name);
+        if(requested < 0 && g_page_index < total) requested = g_page_index;
+    }
+
+    if(g_page_request[0] && (requested < 0 || requested >= total)) {
+        int i;
+        printf("[host] unknown page \"%ls\" - this UI has %d page(s)\n",
+               g_page_request, total);
+        for(i = 0; i < total; ++i) {
+            const char *name = p_page_name ? p_page_name(i) : NULL;
+            printf("  [%d] %s\n", i, name ? name : "?");
+        }
+        /* A typo on the command line is a hard error; a page that vanished
+           during a hot reload falls back to the entry screen instead. */
+        if(initial) {
+            wchar_t state[128];
+            swprintf(state, 128, L"unknown page \"%ls\"", g_page_request);
+            for(i = 0; i < total; ++i) {
+                const char *pname = p_page_name ? p_page_name(i) : NULL;
+                if(pname && pname[0]) {
+                    wchar_t wide_name[32];
+                    utf8_to_wide(pname, wide_name, 32);
+                    wcsncat(state, i ? L", " : L": ", 127 - wcslen(state));
+                    wcsncat(state, wide_name, 127 - wcslen(state));
+                }
+            }
+            if(total == 0) {
+                wcsncat(state, L" - this UI has no pages", 127 - wcslen(state));
+            }
+            set_title(state);
+            FreeLibrary(lib);
+            DeleteFileW(live);
+            return -2;
+        }
+        requested = -1;
+    }
+    if(requested >= 0 && p_set_page) p_set_page(requested);
+
     if(attach(g_w, g_h) != 0) {
         printf("[host] ui_attach failed; keeping the previous UI\n");
         FreeLibrary(lib);
         DeleteFileW(live);
         return -1;
+    }
+
+    g_page_total = total;
+    if(requested >= 0) {
+        const char *name = p_page_name ? p_page_name(requested) : NULL;
+        g_page_index = requested;
+        if(name && name[0]) snprintf(g_page_name, sizeof(g_page_name), "%s", name);
+        else g_page_name[0] = 0;
+    }
+    else {
+        g_page_index = -1;
+        g_page_name[0] = 0;
     }
 
     /* The new engine is up. Tear the old one down before swapping pointers. */
@@ -853,6 +1014,9 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         case WM_KEYDOWN:
             if(wp == VK_ESCAPE) PostQuitMessage(0);
+            else if(wp == VK_NEXT || wp == VK_RIGHT) step_page(1);
+            else if(wp == VK_PRIOR || wp == VK_LEFT) step_page(-1);
+            else if(wp >= '1' && wp <= '9') goto_page((int)(wp - '1'));
             return 0;
         case WM_HOTKEY:
             /* Ctrl+Alt+T: pin/unpin without restarting the preview. */
@@ -923,6 +1087,9 @@ static int parse_args(int argc, wchar_t **argv)
         else if(!wcscmp(a, L"--topmost")) {
             g_topmost = 1;
             g_topmost_forced = 1;
+        }
+        else if(!wcscmp(a, L"--page")) {
+            if(++i >= argc || set_path(g_page_request, argv[i]) != 0) return 2;
         }
         else if(!wcscmp(a, L"--watch")) {
             if(++i >= argc || g_watch_count >= MAX_WATCH) return 2;
@@ -1023,14 +1190,18 @@ int wmain(int argc, wchar_t **argv)
     }
 
     src_fingerprint(g_fp, sizeof(g_fp));
-    if(load_ui() != 0) {
-        printf("[host] initial ui.dll load failed - fix the build then save again\n");
-        /* Do not hot-loop on an unloadable ui.dll; wait for a changed stamp. */
-        g_loaded_stamp = dll_stamp();
-        set_title(L"reload failed (see build.log)");
-    }
-    else {
-        set_title(L"ready");
+    {
+        int load = load_ui();
+        if(load != 0) {
+            printf("[host] initial ui.dll load failed - fix the build then save again\n");
+            /* Do not hot-loop on an unloadable ui.dll; wait for a changed stamp. */
+            g_loaded_stamp = dll_stamp();
+            /* -2 means load_ui already put a precise "unknown page" title up. */
+            if(load != -2) set_title(L"reload failed (see build.log)");
+        }
+        else {
+            set_title(L"ready");
+        }
     }
 
     /* Capture the VS environment in the background so the first save after

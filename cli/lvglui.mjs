@@ -82,7 +82,7 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   build        只编译 host 渲染器
   watch        监听 UI 源码变化并持续重渲
   serve        启动 HTTP 预览（127.0.0.1:8765，端口占用时自动 +1）
-  preview      打开实时预览窗口
+  preview      打开实时预览窗口（多页可用 PgUp/PgDn 或 1-9 切换）
   init         在现有 ESP-IDF 工程中创建 UI 组件
   new <name>   在模板工程里新增一个页面，并注册到页面表
   doctor       检查工程 / 工具链 / 显示配置
@@ -100,7 +100,7 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   --out <dir>       渲染输出目录（默认 <project>/.lvglui/out）
   --no-build        渲染时跳过编译，直接复用已有 shot.exe
   --topmost        实时预览窗口置顶（Ctrl+Alt+T 也可以随时切换）
-  --page <name>     只渲染某一页（需要界面实现 ui_page_* 契约）
+  --page <name>     render 只渲染某一页；preview 用它作为启动页（需要 ui_page_* 契约）
   --all-pages       渲染所有页，另出一张 shot-sheet.png 总览
   --dry-run         new 只报告会改哪些文件，不落盘
   --json            render / build / doctor / new 只向 stdout 输出结果 JSON，日志走 stderr
@@ -362,8 +362,11 @@ function validationProblem(command, flags, positionals) {
   if (flags.page !== undefined && typeof flags.page !== 'string') {
     return '--page 需要一个页名';
   }
-  if ((flags.page !== undefined || flags.allPages !== undefined) && command !== 'render') {
-    return '--page / --all-pages 只用于 render';
+  if (flags.allPages !== undefined && command !== 'render') {
+    return '--all-pages 只用于 render';
+  }
+  if (flags.page !== undefined && command !== 'render' && command !== 'preview') {
+    return '--page 只用于 render / preview';
   }
   return null;
 }
@@ -577,7 +580,14 @@ async function runPreview(flags) {
   const ctx = loadFor('preview', flags);
   if (!ctx.ok) return reportContextFailure(ctx, false);
 
-  const result = previewProject(ctx, { topmost: flags.topmost === true });
+  if (flags.page !== undefined && ctx.pages?.supported !== true) {
+    const message = '界面没有实现 ui_page_* 契约（ui_page_count / ui_page_name / ui_page_show），不能按页预览';
+    if (flags.json) writeJson({ ok: false, stage: 'pages', message });
+    else console.error(`[lvglui] ${message}`);
+    return 2;
+  }
+
+  const result = previewProject(ctx, { topmost: flags.topmost === true, page: flags.page });
   if (!result.ok) {
     console.error(`[lvglui] preview failed (${result.error?.stage ?? 'unknown'}): ${result.error?.message ?? 'unknown error'}`);
     switch (result.error?.stage) {

@@ -227,6 +227,49 @@ int ui_set_page(int index)
     return 0;
 }
 
+int ui_page_index(const char * name)
+{
+#ifdef LVGLUI_HAS_PAGES
+    if(!name || !name[0]) return -1;
+    int total = ui_page_total();
+    for(int i = 0; i < total; i++) {
+        const char * page = ui_page_name(i);
+        if(page && strcmp(page, name) == 0) return i;
+    }
+#else
+    (void)name;
+#endif
+    return -1;
+}
+
+/* 实时预览切页：建新屏 -> 加载 -> 删旧屏。顺序不能反，否则 act_scr 会指向
+   已释放的屏幕；删旧屏会连带清掉页内 timer/anim，和固件重新 show 一页等价。 */
+int ui_goto_page(int index)
+{
+    if(!s_attached) return -1;
+#ifdef LVGLUI_HAS_PAGES
+    if(index < 0 || index >= ui_page_total()) return -1;
+
+    lv_obj_t * prev = s_screen;
+    lv_obj_t * next = ui_page_show(index, NULL);
+    if(!next) return -1;
+
+    lv_screen_load(next);
+    s_screen = next;
+    s_page = index;
+    if(prev && prev != next) lv_obj_delete(prev);
+#ifdef LVGLUI_FONT_APPLY
+    lvglui_apply_font(next);
+#endif
+    lv_refr_now(s_disp);
+    s_version++;
+    return 0;
+#else
+    (void)index;
+    return -1;
+#endif
+}
+
 /* 建根控件：有页面契约且指定了页就走页面，否则走单入口函数。 */
 static lv_obj_t * build_root(void)
 {
