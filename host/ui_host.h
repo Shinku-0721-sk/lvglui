@@ -51,8 +51,10 @@ UI_EXPORT const char *ui_page_name_at(int index);
 UI_EXPORT int         ui_set_page(int index);
 /* Resolve a page name to its index; -1 when the contract or the name is absent. */
 UI_EXPORT int         ui_page_index(const char *name);
-/* Rebuild the live UI on another page, deleting the previous screen. The
- * caller must be attached; -1 means "no contract / bad index / build failed". */
+/* Switch to another page on the live UI. The page is built on first visit and
+ * then reused from a per-page cache; older screens are kept alive so timers
+ * created by a page never outlive their widgets. -1 means "no contract / bad
+ * index / build failed". */
 UI_EXPORT int         ui_goto_page(int index);
 
 #ifdef __cplusplus

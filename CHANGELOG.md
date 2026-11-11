@@ -15,6 +15,7 @@ All notable changes to lvglui are documented here.
 - 修复实时预览/无头渲染在界面第二次刷新时冻死：host 建了 display 却没注册 flush 回调，`disp->flushing` 置 1 后再没人清除，单缓冲路径下一次刷新会卡在 `wait_for_flushing()` 的忙等里（表现为静止画面正常，一旦界面更新就整窗僵住、点关闭无反应；1 秒定时器改 label 必现）。现在 host 注册一个立即调用 `lv_display_flush_ready()` 的 flush 回调，像素基线不变。
 - 新增 `lvglui new <name>`：在 `init` 生成的模板工程里生成 `include/pages/<name>.h` 与 `src/pages/<name>.c`，把注册行追加到 `ui_pages.c` 的页面表末尾，并在组件用显式 `SRCS` 时同步更新 `CMakeLists.txt`。写前备份到 `.lvglui/backup/`，页面表或 CMake 结构失配直接报错不猜，写入失败自动回滚；`--dry-run` 只报告改动。只做 CLI，不加 MCP 工具。
 - `preview` 支持多页查看：标题显示当前页 `page 2/3 settings`，`PgUp`/`PgDn`、`←`/`→` 循环切页，`1`–`9` 直跳，`--page <name>` 指定启动页；切页重建屏幕树并销毁旧页，热重载停在同一页。新增导出 `ui_page_index`/`ui_goto_page`（`ui.dll` 不实现多页契约时窗口行为不变）。这是查看器导航，不含输入注入。
+- `preview` 切页改为按页缓存并复用屏幕，不再销毁旧屏：页面里创建的 `lv_timer` 不随屏幕销毁，删屏后回调会访问已释放的控件，表现为切几次页窗口直接消失。无 `--page` 启动时把模板入口（第 0 页）视为第 1 页，第一次按 `→` 不再原地重建首页。
 - 构建失败时能报出链接错误：新增对 `xxx.obj : error LNK2019: …` 这类无行号的 MSVC 链接错误和 GCC `undefined reference to …` 的解析，按 `file|line|code|message` 去重，并给出 `snprintf/strdup` 在 MSVC C 模式缺失、缺符号实现的提示；`render`/`build` 读 `build.log` 改用 UTF-8→GBK 回退解码，cmd 输出的 `\r` 不再让行尾规则失效。
 - 渲染主题不再由 host 硬编码：去掉 `lv_theme_simple_init()`，改由 `lv_display_create()` 按 `LV_USE_THEME_DEFAULT / SIMPLE / MONO` 自动选择，和固件走同一条路径；工程自己在 UI 入口调用 `lv_display_set_theme()` 也照样生效。此前含默认样式控件（按钮、滑杆、开关等）的界面在预览和固件上会不一致（实测一个未加样式的 `lv_button` 相差 5% 像素）；已自己固定 simple 主题的工程（如 my_lcd）基线不变。README 补了"像素一致的前提"。
 

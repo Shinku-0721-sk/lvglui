@@ -249,7 +249,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 
 - **窗口拖到哪就是哪**：整块画面都能当标题栏拖（1.x 没有可点的控件），松手后位置记在 `.lvglui/build/preview-window.txt`，下次 `preview` 原位打开。
 - **想一直看着画面**：`preview --topmost` 让窗口始终在其它窗口之上，写代码时不用来回切。开着窗口也能用 `Ctrl+Alt+T` 随时置顶/取消，标题栏会显示 `[topmost]`；这个开关也会和位置一起记住。
-- **多页切换**：实现了 `ui_page_*` 的工程，`preview` 标题会显示 `page 2/3 settings`，按 `PgUp`/`PgDn` 或 `←`/`→` 循环切页，`1`–`9` 直接跳到第 N 页；`preview --page settings` 直接以某一页启动。切页会重建整棵屏幕树（旧页里的 timer/animation 一并销毁，不缓存）。保存重新编译后停在当前页；当前页被删掉时退回入口页。这只是查看器导航，不做输入注入。
+- **多页切换**：实现了 `ui_page_*` 的工程，`preview` 标题会显示 `page 2/3 settings`，按 `PgUp`/`PgDn` 或 `←`/`→` 循环切页，`1`–`9` 直接跳到第 N 页；`preview --page settings` 直接以某一页启动。不带 `--page` 时按模板契约把入口屏当作第 1 页（`ui_start()` 就是 `ui_page_show(0, parent)`），所以第一次按 `→` 直接去第 2 页。每页第一次访问时构建，之后复用缓存的屏幕；旧页不销毁——页面里用 `lv_timer`/`lv_anim` 更新控件时，删屏会让回调访问已释放对象。缓存上限是页数，不随按键次数增长。保存重新编译后停在当前页；当前页被删掉时退回入口页。这只是查看器导航，不做输入注入。
 - **保存到刷新约 1 秒**：第一次启动会把 `vcvars64.bat` 的环境缓存成 `.lvglui/build/build-fast.cmd`，之后每次保存只跑 `cmake --build --target ui`，省掉 1.3 秒的 vcvars 和 0.3 秒的 configure。文件轮询 50ms、防抖 100ms。
 - 构建失败时窗口保留旧画面，标题变成 `reload failed (see build.log)`，不会每 100ms 重试刷屏。
 - 想看鼠标/移动事件，设 `LVGLUI_PREVIEW_DEBUG=1`，日志写到 `.lvglui/build/preview-debug.log`。

@@ -797,6 +797,14 @@ static int load_ui(void)
         if(name && name[0]) snprintf(g_page_name, sizeof(g_page_name), "%s", name);
         else g_page_name[0] = 0;
     }
+    else if(total > 0) {
+        /* 模板工程的入口屏就是第 0 页（ui_start -> ui_page_show(0)）；把它
+           当作当前页，第一次按 → 才会去第 1 页，而不是把首页重建一遍。 */
+        const char *name = p_page_name ? p_page_name(0) : NULL;
+        g_page_index = 0;
+        if(name && name[0]) snprintf(g_page_name, sizeof(g_page_name), "%s", name);
+        else g_page_name[0] = 0;
+    }
     else {
         g_page_index = -1;
         g_page_name[0] = 0;

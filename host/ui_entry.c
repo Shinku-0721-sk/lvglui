@@ -41,6 +41,9 @@ extern lv_obj_t * ui_page_show(int index, lv_obj_t * parent);
 #define MAX_TEXT_BYTES 256
 
 static lv_obj_t * s_screen;
+/* 预览切页时缓存每页的根屏；见 ui_goto_page() 里不删旧屏的理由。 */
+static lv_obj_t ** s_page_screens;
+static int s_page_screens_n;
 static lv_display_t * s_disp;
 static uint8_t * s_fb;
 static uint32_t s_version;
@@ -242,22 +245,26 @@ int ui_page_index(const char * name)
     return -1;
 }
 
-/* 实时预览切页：建新屏 -> 加载 -> 删旧屏。顺序不能反，否则 act_scr 会指向
-   已释放的屏幕；删旧屏会连带清掉页内 timer/anim，和固件重新 show 一页等价。 */
+/* 实时预览切页：每页建一次、之后复用缓存的屏幕。
+   不删旧屏：页面可能创建了不挂在屏幕对象下的 lv_timer，删屏会让它的回调
+   在下一拍访问已释放的控件。缓存的上限是"页数"，不会随按键次数增长。 */
 int ui_goto_page(int index)
 {
     if(!s_attached) return -1;
 #ifdef LVGLUI_HAS_PAGES
-    if(index < 0 || index >= ui_page_total()) return -1;
+    int total = ui_page_total();
+    if(index < 0 || index >= total) return -1;
 
-    lv_obj_t * prev = s_screen;
-    lv_obj_t * next = ui_page_show(index, NULL);
-    if(!next) return -1;
-
-    lv_screen_load(next);
+    lv_obj_t * next = NULL;
+    if(s_page_screens && index < s_page_screens_n) next = s_page_screens[index];
+    if(!next) {
+        next = ui_page_show(index, NULL);
+        if(!next) return -1;
+        if(s_page_screens && index < s_page_screens_n) s_page_screens[index] = next;
+    }
+    if(next != lv_screen_active()) lv_screen_load(next);
     s_screen = next;
     s_page = index;
-    if(prev && prev != next) lv_obj_delete(prev);
 #ifdef LVGLUI_FONT_APPLY
     lvglui_apply_font(next);
 #endif
@@ -318,12 +325,35 @@ int ui_attach(int width, int height)
        不要在这里硬编码，否则没写显式样式的控件会和固件长得不一样；
        工程若在 UI 入口里自己调 lv_display_set_theme()，同样会生效。 */
 
+#ifdef LVGLUI_HAS_PAGES
+    free(s_page_screens);
+    s_page_screens = NULL;
+    s_page_screens_n = ui_page_total();
+    if(s_page_screens_n > 0) {
+        s_page_screens = (lv_obj_t **)calloc((size_t)s_page_screens_n, sizeof(*s_page_screens));
+        if(!s_page_screens) s_page_screens_n = 0;
+    }
+#endif
+
     s_screen = build_root();
     if(!s_screen) {
         if(s_page >= 0) fprintf(stderr, "[ui] 第 %d 页没有返回根控件\n", s_page);
         else fprintf(stderr, "[ui] 入口函数返回了 NULL\n");
+#ifdef LVGLUI_HAS_PAGES
+        free(s_page_screens);
+        s_page_screens = NULL;
+        s_page_screens_n = 0;
+#endif
         return -3;
     }
+#ifdef LVGLUI_HAS_PAGES
+    /* 模板工程的入口就是第 0 页（ui_start() -> ui_page_show(0, parent)），
+       把它记进缓存，第一次切走再切回来就不用重建。 */
+    if(s_page_screens && s_page_screens_n > 0) {
+        if(s_page >= 0 && s_page < s_page_screens_n) s_page_screens[s_page] = s_screen;
+        else s_page_screens[0] = s_screen;
+    }
+#endif
     lv_screen_load(s_screen);
 #ifdef LVGLUI_FONT_APPLY
     lvglui_apply_font(s_screen);
@@ -364,6 +394,9 @@ void ui_detach(void)
     s_screen = NULL;
     lv_deinit();
     s_disp = NULL;
+    free(s_page_screens);
+    s_page_screens = NULL;
+    s_page_screens_n = 0;
     free(s_fb);
     s_fb = NULL;
 }
