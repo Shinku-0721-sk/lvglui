@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { parseArgs } from '../../cli/lvglui.mjs';
+import { parseArgs, validationProblem } from '../../cli/lvglui.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../../cli/lvglui.mjs');
 
@@ -91,12 +91,31 @@ test('--scroll is a render-only value flag', () => {
   assert.equal(parseArgs(['render', '--scroll', '120', '--all-pages']).flags.allPages, true);
 });
 
-function cliExit(args) {
-  return spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', timeout: 60000 }).status;
-}
+test('--scroll and --max-heap-pct are render-only flags', () => {
+  const parsed = parseArgs(['render', '--scroll', 'fixture.page=bottom', '--max-heap-pct', '70']);
+  assert.equal(parsed.flags.scroll, 'fixture.page=bottom');
+  assert.equal(parsed.flags.maxHeapPct, 70);
+  assert.equal(parseArgs(['render', '--scroll=120']).flags.scroll, '120');
+  assert.equal(parseArgs(['render', '--scroll', '120', '--all-pages']).flags.allPages, true);
+});
 
-test('--scroll validation rejects preview, --all-pages and empty values', () => {
-  assert.equal(cliExit(['preview', '--scroll', '120']), 2);
-  assert.equal(cliExit(['render', '--scroll', '120', '--all-pages']), 2);
-  assert.equal(cliExit(['render', '--scroll', '']), 2);
+test('validationProblem gates scroll and heap budget before any work starts', () => {
+  const base = { project: 'D:/x' };
+  assert.equal(validationProblem('render', { ...base, scroll: '120' }, []), null);
+  assert.match(validationProblem('preview', { ...base, scroll: '120' }, []), /只用于 render/);
+  assert.match(
+    validationProblem('render', { ...base, scroll: '120', allPages: true }, []),
+    /不能同时使用/,
+  );
+  assert.match(validationProblem('render', { ...base, scroll: '' }, []), /需要一个值/);
+
+  assert.equal(validationProblem('render', { ...base, maxHeapPct: 70 }, []), null);
+  assert.match(validationProblem('preview', { ...base, maxHeapPct: 70 }, []), /只用于 render/);
+  assert.match(
+    validationProblem('render', { ...base, maxHeapPct: 70, allPages: true }, []),
+    /不能同时使用/,
+  );
+  assert.match(validationProblem('render', { ...base, maxHeapPct: 0 }, []), /1-100/);
+  assert.match(validationProblem('render', { ...base, maxHeapPct: 101 }, []), /1-100/);
+  assert.match(validationProblem('render', { ...base, maxHeapPct: 'x' }, []), /1-100/);
 });

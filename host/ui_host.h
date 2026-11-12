@@ -73,6 +73,15 @@ UI_EXPORT int         ui_scroll(const char *spec);
  * scrolls. */
 UI_EXPORT int         ui_wheel(int x, int y, int dx, int dy);
 
+/* ---- memory ------------------------------------------------------------
+ * The preview and the firmware share LVGL's builtin heap (LV_MEM_SIZE from
+ * the generated lv_conf.h), so these numbers describe the same pool the
+ * device allocates from. Writes one line to `buf`:
+ *   mem total=65536 free=... max_used=... used_cnt=... used_pct=.. frag_pct=..
+ * Returns 0 on success, -1 when LVGL uses another allocator (no monitor).
+ */
+UI_EXPORT int         ui_mem_info(char *buf, int cap);
+
 #ifdef __cplusplus
 }
 #endif

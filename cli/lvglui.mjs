@@ -41,8 +41,8 @@ const COMMANDS = new Set([
   'help',
 ]);
 
-const VALUE_FLAGS = new Set(['project', 'width', 'height', 'frames', 'out', 'port', 'preset', 'size', 'chars', 'name', 'font', 'dynamic', 'fs-path', 'freetype-dir', 'page', 'scroll']);
-const NUMBER_FLAGS = new Set(['width', 'height', 'frames', 'port', 'size']);
+const VALUE_FLAGS = new Set(['project', 'width', 'height', 'frames', 'out', 'port', 'preset', 'size', 'chars', 'name', 'font', 'dynamic', 'fs-path', 'freetype-dir', 'page', 'scroll', 'max-heap-pct']);
+const NUMBER_FLAGS = new Set(['width', 'height', 'frames', 'port', 'size', 'max-heap-pct']);
 const KNOWN_FLAGS = new Set([
   'project',
   'width',
@@ -65,6 +65,7 @@ const KNOWN_FLAGS = new Set([
   'freetypeDir',
   'page',
   'scroll',
+  'maxHeapPct',
   'allPages',
   'dryRun',
   'help',
@@ -103,6 +104,7 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   --topmost        实时预览窗口置顶（Ctrl+Alt+T 也可以随时切换）
   --page <name>     render 只渲染某一页；preview 用它作为启动页（需要 ui_page_* 契约）
   --scroll <spec>   render 先滚动再截图：<y>、<name>=<y>、<name>=bottom（不能和 --all-pages 同用）
+  --max-heap-pct <1-100>  render 后检查 LVGL 堆使用率，超过则 meta.budget.exceeded=true
   --all-pages       渲染所有页，另出一张 shot-sheet.png 总览
   --dry-run         new 只报告会改哪些文件，不落盘
   --json            render / build / doctor / new 只向 stdout 输出结果 JSON，日志走 stderr
@@ -219,6 +221,7 @@ function exitForRender(result) {
     case 'ctx':
     case 'toolchain':
     case 'scroll':
+    case 'budget':
       return 2;
     default:
       return 3;
@@ -307,7 +310,7 @@ function isPositiveInteger(value) {
   return Number.isInteger(value) && value > 0;
 }
 
-function validationProblem(command, flags, positionals) {
+export function validationProblem(command, flags, positionals) {
   if (!COMMANDS.has(command)) return `未知命令: ${command}`;
   if (command === 'help') return null;
 
@@ -368,8 +371,25 @@ function validationProblem(command, flags, positionals) {
   if (flags.allPages !== undefined && command !== 'render') {
     return '--all-pages 只用于 render';
   }
-  if (flags.page !== undefined && command !== 'render' && command !== 'preview') {
-    return '--page 只用于 render / preview';
+  if (flags.scroll !== undefined && command !== 'render') {
+    return '--scroll 只用于 render';
+  }
+  if (flags.scroll !== undefined && flags.allPages !== undefined) {
+    return '--scroll 与 --all-pages 不能同时使用';
+  }
+  if (flags.scroll !== undefined && (typeof flags.scroll !== 'string' || flags.scroll === '')) {
+    return '--scroll 需要一个值: <y>、<name>=<y> 或 <name>=bottom';
+  }
+  if (flags.maxHeapPct !== undefined && command !== 'render') {
+    return '--max-heap-pct 只用于 render';
+  }
+  if (flags.maxHeapPct !== undefined && flags.allPages !== undefined) {
+    return '--max-heap-pct 与 --all-pages 不能同时使用';
+  }
+  if (flags.maxHeapPct !== undefined
+    && (!/^[0-9]+$/.test(String(flags.maxHeapPct))
+      || Number(flags.maxHeapPct) < 1 || Number(flags.maxHeapPct) > 100)) {
+    return '--max-heap-pct 需要 1-100 的整数';
   }
   return null;
 }
@@ -394,6 +414,7 @@ async function runRender(flags) {
     page: flags.page,
     allPages: flags.allPages === true,
     scroll: flags.scroll,
+    maxHeapPct: flags.maxHeapPct,
   });
   const value = renderResult(result);
 
@@ -404,6 +425,13 @@ async function runRender(flags) {
     const pageCount = Array.isArray(result.pages) ? result.pages.length : 0;
     const suffix = pageCount > 1 ? ` pages=${pageCount} sheet=${result.pngPath}` : '';
     console.log(`[lvglui] png=${result.pngPath} meta=${result.metaPath} tree=${result.treePath}${suffix}`);
+    if (result.memory?.lvgl) {
+      const m = result.memory.lvgl;
+      console.log(`[lvglui] heap ${m.usedPct}% used (${m.total - m.free}/${m.total} B, peak ${m.maxUsed} B)`);
+    }
+    if (result.budget?.exceeded) {
+      console.warn(`[lvglui] heap budget exceeded: ${result.memory.lvgl.usedPct}% > ${result.budget.heapPct}%`);
+    }
   } else {
     reportRenderFailure(result);
   }

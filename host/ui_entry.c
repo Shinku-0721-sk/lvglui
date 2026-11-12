@@ -415,6 +415,29 @@ int ui_wheel(int x, int y, int dx, int dy)
     return 0;
 }
 
+/* 内存：预览与固件共用 LVGL 的 builtin 堆（lv_conf.h 的 LV_MEM_SIZE），
+   所以这里的 used_pct / max_used 就是设备上 UI 层会看到的同一个池。
+   换成 clib 或外部分配器时没有 monitor，返回 -1，让调用方别伪造数字。 */
+int ui_mem_info(char * buf, int cap)
+{
+    if(!buf || cap <= 0) return -1;
+#if defined(LV_USE_STDLIB_MALLOC) && defined(LV_STDLIB_BUILTIN)
+#if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
+    lv_mem_monitor_t mon;
+    memset(&mon, 0, sizeof(mon));
+    lv_mem_monitor(&mon);
+    snprintf(buf, (size_t)cap,
+             "mem total=%lu free=%lu max_used=%lu used_cnt=%lu used_pct=%u frag_pct=%u",
+             (unsigned long)mon.total_size, (unsigned long)mon.free_size,
+             (unsigned long)mon.max_used, (unsigned long)mon.used_cnt,
+             (unsigned)mon.used_pct, (unsigned)mon.frag_pct);
+    return 0;
+#endif
+#endif
+    LV_UNUSED(cap);
+    return -1;
+}
+
 /* 建根控件：有页面契约且指定了页就走页面，否则走单入口函数。 */
 static lv_obj_t * build_root(void)
 {

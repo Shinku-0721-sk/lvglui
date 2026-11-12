@@ -87,6 +87,13 @@ int main(int argc, char **argv)
     }
     for(int i = 0; i < frames; ++i) ui_tick(FRAME_MS);
 
+    /* One machine-readable line for the renderer's meta.json; harmless when
+       the UI uses an allocator without a monitor (nothing is printed). */
+    {
+        char membuf[192];
+        if(ui_mem_info(membuf, (int)sizeof(membuf)) == 0) printf("%s\n", membuf);
+    }
+
     if(tree_path) ui_dump_tree(tree_path);
 
     int w = 0, h = 0;

@@ -97,6 +97,32 @@ function scrollInfo(stdout) {
   return { target: target === '-' ? null : target, x, y };
 }
 
+// Parse the `mem total=... free=... max_used=... used_cnt=... used_pct=...
+// frag_pct=...` line shot.exe prints after the frames. The numbers describe
+// LVGL's own heap, which the firmware allocates from as well.
+export function memInfo(stdout) {
+  const line = String(stdout ?? '')
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .find((value) => /^mem\s/.test(value));
+  if (!line) return null;
+  const fields = {};
+  for (const token of line.split(/\s+/).slice(1)) {
+    const [key, raw] = token.split('=');
+    const n = Number(raw);
+    if (key && Number.isFinite(n)) fields[key] = n;
+  }
+  if (fields.total === undefined) return null;
+  return {
+    total: fields.total,
+    free: fields.free ?? null,
+    maxUsed: fields.max_used ?? null,
+    usedCount: fields.used_cnt ?? null,
+    usedPct: fields.used_pct ?? null,
+    fragPct: fields.frag_pct ?? null,
+  };
+}
+
 // Ask shot.exe for the page list (one name per line, render order). The names
 // are runtime C strings, so this cannot come from a static scan.
 function listPages(shotPath, buildDir) {
@@ -247,6 +273,8 @@ export function renderProject(ctx, options = {}) {
     pages: [],
     page: null,
     scroll: null,
+    memory: null,
+    budget: null,
     buildMs: 0,
     shotMs: 0,
     encodeMs: 0,
@@ -287,6 +315,20 @@ export function renderProject(ctx, options = {}) {
       'scroll',
       '--scroll cannot be combined with --all-pages: pages scroll independently; '
         + 'render one page at a time, or pass the target name explicitly.',
+    );
+  }
+
+  const budgetPct = opts.maxHeapPct === undefined || opts.maxHeapPct === null
+    ? null
+    : Number(opts.maxHeapPct);
+  if (budgetPct !== null && (!Number.isInteger(budgetPct) || budgetPct < 1 || budgetPct > 100)) {
+    return fail('budget', '--max-heap-pct must be an integer between 1 and 100');
+  }
+  if (budgetPct !== null && opts.allPages === true) {
+    return fail(
+      'budget',
+      '--max-heap-pct cannot be combined with --all-pages: each page is measured in its '
+        + 'own process; render pages one at a time.',
     );
   }
 
@@ -728,6 +770,15 @@ export function renderProject(ctx, options = {}) {
     ? null
     : { spec: scrollSpec, ...(scrollInfo(shot.stdout) ?? { resolved: false }) };
 
+  const memory = memInfo(shot.stdout);
+  const budget = budgetPct === null
+    ? null
+    : {
+        heapPct: budgetPct,
+        measured: memory !== null,
+        exceeded: memory !== null && memory.usedPct !== null && memory.usedPct > budgetPct,
+      };
+
   const meta = {
     version: 1,
     project: ctx.root,
@@ -739,6 +790,8 @@ export function renderProject(ctx, options = {}) {
     frames: frameCount,
     ...(pageIndex !== null ? { page: pageNames[pageIndex] } : {}),
     ...(scroll ? { scroll } : {}),
+    ...(memory ? { memory: { lvgl: memory } } : {}),
+    ...(budget ? { budget } : {}),
     repaints,
     buildMs: result.buildMs,
     shotMs: result.shotMs,
@@ -780,5 +833,7 @@ export function renderProject(ctx, options = {}) {
     names,
     page: pageIndex !== null ? pageNames[pageIndex] : null,
     scroll,
+    memory: memory ? { lvgl: memory } : null,
+    budget,
   };
 }

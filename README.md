@@ -234,6 +234,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 - `--no-build`：复用已有 `shot.exe`（shot 缺失时会自动构建）
 - `--page <name|n>`：`render` 只渲染某一页；`preview` 用它作为启动页（页名，或从 1 开始的页号；需要 `ui_page_*` 契约）
 - `--scroll <spec>`：`render` 先滚动再截图，写入 `meta.json.scroll`；`120` 滚当前屏第一个可竖滚对象，`name=120` 指定控件，`name=bottom`/`name=top` 跳到端点（需要控件设置 `lv_obj_set_name`）；不能和 `--all-pages` 同用
+- `--max-heap-pct <1-100>`：`render` 后检查 LVGL 堆使用率，超过上限时 `meta.budget.exceeded` 为 `true`（退出码仍 0，供 MCP/skill 判定“先优化再交付”）；不能和 `--all-pages` 同用
 - `--all-pages`：渲染所有页，另出 `shot-sheet.png` 总览
 - `--topmost`：`preview` 窗口置顶（开着窗口时也可随时按 `Ctrl+Alt+T` 切换）
 - `--json`：`render/build/doctor/new` 只向 stdout 输出 JSON，日志走 stderr
@@ -259,6 +260,28 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 - **保存到刷新约 1 秒**：第一次启动会把 `vcvars64.bat` 的环境缓存成 `.lvglui/build/build-fast.cmd`，之后每次保存只跑 `cmake --build --target ui`，省掉 1.3 秒的 vcvars 和 0.3 秒的 configure。文件轮询 50ms、防抖 100ms。
 - 构建失败时窗口保留旧画面，标题变成 `reload failed (see build.log)`，不会每 100ms 重试刷屏。
 - 想看鼠标/移动事件，设 `LVGLUI_PREVIEW_DEBUG=1`，日志写到 `.lvglui/build/preview-debug.log`。
+
+## 内存
+
+`render` 和 `preview` 会报告 LVGL 自己的堆，固件也是从这个池分配（生成的 `lv_conf.h` 里的
+`LV_MEM_SIZE`，通常 64 KB）：
+
+```json
+"memory": { "lvgl": { "total": 60912, "free": 42416, "maxUsed": 19200,
+                      "usedCount": 266, "usedPct": 31, "fragPct": 1 } }
+```
+
+`lvglui render --max-heap-pct 70` 会再加一段
+`"budget": { "heapPct": 70, "measured": true, "exceeded": false }`；`usedPct` 超过预算时
+`exceeded` 变成 `true`（退出码仍是 0——图仍然有效，但 MCP 客户端和 skill 会把它当成
+“先优化再交付”的信号）。`render_ui` 也把同样的数字放在 `memory` / `budget` 里，约束 AI 时
+不用靠猜。
+
+- `total` / `free` / `maxUsed` 是 LVGL 池内的字节数，`usedCount` 是当前存活分配数；
+- `maxUsed` 是本进程的峰值——切页前后对比它，能看出堆是否只涨不落；
+- 不报告进程 RSS：它混了纹理、字体和无关分配，容易误导；
+- preview 在 attach 后和每次切页后打印同一行，并追加到 `.lvglui/build/preview-mem.log`（CLI 启动窗口时 stdout 被忽略，日志文件是给人和脚本看的落点）；
+- `LV_USE_STDLIB_MALLOC` 换成 clib 或自定义分配器时没有 monitor，`memory` 直接省略，不伪造数字。
 
 ## 在 DSH 里用
 

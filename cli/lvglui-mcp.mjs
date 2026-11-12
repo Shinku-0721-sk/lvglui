@@ -79,6 +79,14 @@ const TOOLS = [
           type: 'boolean',
           description: '渲染所有页，返回 contact sheet 总览图；每页单独的 PNG 也在 meta.pages 里',
         },
+        scroll: {
+          type: 'string',
+          description: '先滚动再截图：<y>、<name>=<y>、<name>=bottom（不能与 allPages 同用）',
+        },
+        maxHeapPct: {
+          type: 'number',
+          description: 'LVGL 堆使用率上限（1-100）；超过时返回 budget.exceeded=true，应先优化界面',
+        },
       },
       additionalProperties: false,
     },
@@ -203,6 +211,8 @@ async function callTool(name, args = {}) {
       outDir: args.outDir,
       page: args.page,
       allPages: args.allPages === true,
+      scroll: args.scroll,
+      maxHeapPct: args.maxHeapPct,
     });
     if (!r.ok) {
       return toolResult(
@@ -234,6 +244,8 @@ async function callTool(name, args = {}) {
           page: r.page ?? null,
           pages: r.pages ?? [],
           sheet: r.meta?.sheet ?? null,
+          memory: r.meta?.memory ?? null,
+          budget: r.meta?.budget ?? null,
           meta: r.meta,
           tree: r.tree,
           diagnostics: r.diagnostics,

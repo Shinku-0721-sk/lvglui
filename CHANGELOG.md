@@ -3,6 +3,7 @@
 All notable changes to lvglui are documented here.
 
 ## Unreleased
+- 内存可见性：`render`/`render_ui` 返回 `memory.lvgl`（LVGL 堆的 `total/free/maxUsed/usedCount/usedPct/fragPct`，与固件同一个 `LV_MEM_SIZE` 池），新增 `--max-heap-pct 1-100` 检查并置 `budget.exceeded`；preview 在 attach/切页后打印同一行，skill 增加内存预算约束（超限先降级再交付）。
 
 - 多页渲染：实现 `ui_page_count`/`ui_page_name`/`ui_page_show` 的界面可用 `render --all-pages` 逐页出图并拼 `shot-sheet.png` 总览，或用 `--page <name>` 单页渲染；MCP 的 `render_ui` 增加 `page`/`allPages`。没有契约的工程行为不变。
 - `init` 模板新增 `include/ui_pages.h` 与 `src/ui_pages.c`（默认一页 `home`）。

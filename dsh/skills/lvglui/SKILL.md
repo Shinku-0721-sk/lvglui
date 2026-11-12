@@ -33,7 +33,8 @@ description: 在 ESP-IDF 6.x + LVGL 9.x 工程里编写或调整 UI 页面：用
 7. 调 `mcp__lvglui__render_ui`（第一次 `rebuild:true`，之后可 `rebuild:false`），看返回的 `image` 和 `tree`：
    - `tree` 的 `name/cls/x/y/w/h/text/value` 用来核对布局和文字；
    - 图片用来看溢出、对齐、颜色、中文是否正确；
-   - 有编译错误先按 `diagnostics` 第一条修，不要猜 LVGL API。
+   - 有编译错误先按 `diagnostics` 第一条修，不要猜 LVGL API；
+   - 同时看 `memory.lvgl`（`usedPct`/`maxUsed`）和 `budget`，别为了观感把堆吃超。
 8. 改完再 render，直到截图合理；最后报告改了哪些文件、截图路径、剩余 warning。
 9. 多页界面：如果 UI 组件实现了 `ui_page_count/ui_page_name/ui_page_show`，用 `render_ui` 的 `allPages:true` 一次看全部页（返回 contact sheet，每页图在 `pages[]`），或用 `page:"<name>"` 单看一页。页面表在 `<uiDir>/src/ui_pages.c`，新增页只往表里加一行 + 加 `include/pages/x.h` 与 `src/pages/x.c`。页面里创建的 `lv_timer` 不随屏幕对象销毁，清理规则见“业务边界”。
 10. 用户想边改边看时调 `mcp__lvglui__preview_ui`（需要看得见就传 `topmost:true` 让它置顶）；保存 UI 源码后窗口约 1 秒自动重建并刷新，失败会保留上一版画面。
@@ -45,6 +46,14 @@ description: 在 ESP-IDF 6.x + LVGL 9.x 工程里编写或调整 UI 页面：用
 - 默认不创建 `lv_timer`：动效用 `lv_anim`（随对象删除自动清理），数据变化直接更新控件。
 - 确实需要周期刷新时，一个页面至多一个 timer：在页面入口创建、句柄存 static，并在页面根的 `LV_EVENT_DELETE` 里 `lv_timer_delete`；不要每个控件各建一个。页面可能被反复创建时，先确认旧 timer 已删除。
 - timer 回调里只读 `ui_port_*` 和更新控件：不 `delay`、不阻塞、不建/删屏幕或控件；回调可能在页面已隐藏或销毁后触发，访问控件前先确认页面仍有效。
+
+### 内存预算（硬约束）
+
+- 预览和固件共用 LVGL 的 builtin 堆（`lv_conf.h` 的 `LV_MEM_SIZE`，通常 64 KB）。`render_ui` 返回的 `memory.lvgl` 是这个池的真实占用：`usedPct`、`maxUsed`、`usedCount`、`fragPct`；报告里必须带上 `usedPct` 和 `maxUsed`。
+- 用户给了上限时，把它传给 `render_ui` 的 `maxHeapPct`（1-100）。返回 `budget.exceeded: true` 时**不许交付**：先降级再截图，直到不超过上限；不要用“再加点装饰更好看”换内存。
+- 没给上限时按默认线把握：`usedPct ≥ 70%` 视为偏紧，要在报告里说明；`≥ 85%` 视为不可交付，先优化或请用户明确同意。`fragPct` 持续偏高（>30%）时把大对象放到页面初期一次性创建，避免反复分配。
+- 优化顺序：删装饰（阴影/模糊/渐变/过多圆角）→ 复用样式与对象 → 减少嵌套层级和控件数 → 缩小字号/字符集（`font add --dynamic labels`）→ 小图/少动画。优先保布局与可读性，不要用更多控件堆视觉效果。
+- 只认 `memory.lvgl`；进程内存、设备端 `esp_get_free_heap_size` 都混了别的子系统，不能拿来说“UI 用了多少”。工程换成 clib/外部分配器时 `memory` 缺失，如实说无法测量，不要编数字。
 - `ui_port_stub.c` 是 host 预览用的桩，全部包在 `#ifdef LVGLUI_HOST` 里；固件里是空 TU。真正的实现在 `components/ui_port/ui_port_impl.c`（独立组件，app_ui 依赖它）。**不要**把它放进 `main/`：链接顺序会导致 `undefined reference to ui_port_*`。
 - 不改 `main/`、BSP、`sdkconfig`、工程级 `CMakeLists.txt`、`managed_components/`。
 - 不做点击/滑动/动画的交互模拟；1.x 只验证静态布局和初始数据（交互注入排在 2.0）。用户若要求验证点击后的状态，说明做不到，并改成建议用回调逻辑走查或上板自测。

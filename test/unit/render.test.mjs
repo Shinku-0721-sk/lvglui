@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { renderProject } from '../../core/render.mjs';
+import { memInfo, renderProject } from '../../core/render.mjs';
 
 const TOOL_DIR = path.resolve(import.meta.dirname, '../..');
 
@@ -101,4 +101,46 @@ test('--scroll cannot be combined with --all-pages', () => {
   } finally {
     cleanup();
   }
+});
+
+test('--max-heap-pct rejects bad values before building', () => {
+  for (const value of ['', '0', '101', 'abc']) {
+    const { ctx, cleanup } = scrollCtx();
+    try {
+      const r = renderProject(ctx, { maxHeapPct: value });
+      assert.equal(r.ok, false);
+      assert.equal(r.error?.stage, 'budget');
+      assert.match(r.error.message, /between 1 and 100/);
+    } finally {
+      cleanup();
+    }
+  }
+});
+
+test('--max-heap-pct cannot be combined with --all-pages', () => {
+  const { ctx, cleanup } = scrollCtx();
+  try {
+    const r = renderProject(ctx, { maxHeapPct: 70, allPages: true });
+    assert.equal(r.ok, false);
+    assert.equal(r.error?.stage, 'budget');
+    assert.match(r.error.message, /--all-pages/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('memInfo reads the line shot.exe prints after the frames', () => {
+  const parsed = memInfo(
+    'scroll - 0 120\nmem total=65536 free=41312 max_used=24224 used_cnt=42 used_pct=36 frag_pct=3\n',
+  );
+  assert.deepEqual(parsed, {
+    total: 65536,
+    free: 41312,
+    maxUsed: 24224,
+    usedCount: 42,
+    usedPct: 36,
+    fragPct: 3,
+  });
+  assert.equal(memInfo('scroll - 0 120\n'), null);
+  assert.equal(memInfo('mem total=65536 free=1\n').maxUsed, null);
 });

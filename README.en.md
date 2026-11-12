@@ -292,6 +292,9 @@ Common options:
 - `--page <name|n>`: for `render`, render only that page; for `preview`, use it as the start page
   (page name, or a 1-based page number; requires the `ui_page_*` contract)
 - `--scroll <spec>`: `render` scrolls before capturing and records the offset in `meta.json.scroll`;
+- `--max-heap-pct <1-100>`: after `render`, check the LVGL heap percentage; above the limit sets
+  `meta.budget.exceeded: true` (exit code stays 0, so the MCP client and skill can require
+  optimisation before delivery); cannot be combined with `--all-pages`
   `120` scrolls the first vertically scrollable object on the current screen, `name=120` names the
   object, `name=bottom` / `name=top` jump to an end (the object needs `lv_obj_set_name`); cannot be
   combined with `--all-pages`
@@ -343,6 +346,33 @@ Exit codes: `0` success, `1` build/render failure, `2` usage/config error, `3` r
   `reload failed (see build.log)`; it does not retry every 100ms and flood the log.
 - To watch mouse/move events, set `LVGLUI_PREVIEW_DEBUG=1`; the log goes to
   `.lvglui/build/preview-debug.log`.
+
+## Memory
+
+`render` and `preview` report LVGL's own heap, which the firmware allocates from too
+(`LV_MEM_SIZE` in the generated `lv_conf.h`, usually 64 KB):
+
+```json
+"memory": { "lvgl": { "total": 60912, "free": 42416, "maxUsed": 19200,
+                      "usedCount": 266, "usedPct": 31, "fragPct": 1 } }
+```
+
+`lvglui render --max-heap-pct 70` adds
+`"budget": { "heapPct": 70, "measured": true, "exceeded": false }`; when `usedPct` goes above the
+budget, `exceeded` flips to `true` (the exit code stays 0 — the frame is still valid, but the MCP
+client and the skill treat it as "optimise before delivery"). `render_ui` exposes the same numbers
+as `memory` / `budget`, so an assistant can be held to a limit without guessing.
+
+- `total` / `free` / `maxUsed` are bytes inside the LVGL pool; `usedCount` is the number of live
+  allocations;
+- `maxUsed` is this process's high-water mark — compare it across page switches to spot growth;
+- process RSS is not reported: it includes textures, fonts and unrelated allocations and would
+  mislead;
+- the preview prints the same line after attach and after each page switch, and appends it to
+  `.lvglui/build/preview-mem.log` (the CLI ignores the window's stdio, so the file is the
+  durable place to read it);
+- with `LV_USE_STDLIB_MALLOC` set to clib or a custom allocator there is no monitor, so `memory`
+  is omitted instead of faking numbers.
 
 ## Using it from DSH
 

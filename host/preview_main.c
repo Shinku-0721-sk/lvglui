@@ -54,6 +54,7 @@ static int                    (*p_page_index)(const char *);
 static int                    (*p_set_page)(int);
 static int                    (*p_goto_page)(int);
 static int                    (*p_scroll)(int, int, int, int);
+static int                    (*p_mem)(char *, int);
 
 /* Page navigation (optional ui_page_* contract). g_page_index -1 means the
  * entry function chose the screen; names are kept in UTF-8 for the ABI. */
@@ -631,12 +632,39 @@ static void apply_topmost(void)
 }
 
 /* ---- page navigation -------------------------------------------------- */
+/* The CLI spawns preview.exe with stdio ignored, so the heap line would only
+   be visible when the binary is started by hand. Keep a copy next to the build
+   artifacts as well - it is the same LVGL pool the firmware uses. */
+static void log_memory(void)
+{
+    char membuf[192];
+    if(!p_mem || p_mem(membuf, (int)sizeof(membuf)) != 0) return;
+
+    printf("[host] %s\n", membuf);
+    fflush(stdout);
+
+    if(g_build_dir[0]) {
+        wchar_t path[PATH_CAP];
+        if(swprintf(path, PATH_CAP, L"%ls\\preview-mem.log", g_build_dir) > 0) {
+            FILE * f = _wfopen(path, L"a");
+            if(f) {
+                SYSTEMTIME st;
+                GetLocalTime(&st);
+                fprintf(f, "%04d-%02d-%02d %02d:%02d:%02d %s\n",
+                        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, membuf);
+                fclose(f);
+            }
+        }
+    }
+}
+
 static void goto_page(int index)
 {
     const char *name;
     if(!p_goto_page || g_page_total <= 0) return;
     if(index < 0 || index >= g_page_total) return;
     if(p_goto_page(index) != 0) return;
+    log_memory();
 
     g_page_index = index;
     name = p_page_name ? p_page_name(index) : NULL;
@@ -665,7 +693,7 @@ static void unload_ui(void)
         g_dll = NULL;
         p_attach = NULL; p_tick = NULL; p_pixels = NULL; p_detach = NULL;
         p_page_total = NULL; p_page_name = NULL; p_page_index = NULL;
-        p_set_page = NULL; p_goto_page = NULL; p_scroll = NULL;
+        p_set_page = NULL; p_goto_page = NULL; p_scroll = NULL; p_mem = NULL;
         g_page_total = 0;
     }
     if(g_live_path[0]) {
@@ -725,6 +753,7 @@ static int load_ui(void)
     p_set_page   = (int (*)(int))           GetProcAddress(lib, "ui_set_page");
     p_goto_page  = (int (*)(int))           GetProcAddress(lib, "ui_goto_page");
     p_scroll     = (int (*)(int, int, int, int)) GetProcAddress(lib, "ui_wheel");
+    p_mem        = (int (*)(char *, int))   GetProcAddress(lib, "ui_mem_info");
 
     /* Resolve the page before attach so the very first screen is the one the
        user asked for; on hot reload the page they are looking at wins. */
@@ -791,6 +820,8 @@ static int load_ui(void)
         DeleteFileW(live);
         return -1;
     }
+
+    log_memory();
 
     g_page_total = total;
     if(requested >= 0) {
