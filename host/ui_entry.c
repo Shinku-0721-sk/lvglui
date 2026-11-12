@@ -147,9 +147,12 @@ static bool dump_node(FILE * f, lv_obj_t * obj, int depth, int * count)
     json_string(f, name);
     fputs(",\"cls\":", f);
     json_string(f, cls_name);
-    fprintf(f, ",\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"hidden\":%s",
+    lv_area_t coords;
+    lv_obj_get_coords(obj, &coords);
+    fprintf(f, ",\"x\":%d,\"y\":%d,\"w\":%d,\"h\":%d,\"absX\":%d,\"absY\":%d,\"hidden\":%s",
             (int)lv_obj_get_x(obj), (int)lv_obj_get_y(obj),
             (int)lv_obj_get_width(obj), (int)lv_obj_get_height(obj),
+            (int)coords.x1, (int)coords.y1,
             lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN) ? "true" : "false");
 
     if(strcmp(cls_name, "lv_label") == 0) {

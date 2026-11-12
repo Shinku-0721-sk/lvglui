@@ -19,11 +19,21 @@ import { initProject } from '../core/init.mjs';
 import { newPage } from '../core/newpage.mjs';
 import { discoverProject } from '../core/discover.mjs';
 import { readText } from '../core/fsutil.mjs';
-import { fontAdd, fontOff, fontStatus, FONT_PRESET, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../core/font.mjs';
+import { fontAddWithChanges, fontOff, fontStatus, FONT_PRESET, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../core/font.mjs';
 import { parseDiagnostics } from '../core/diagnostics.mjs';
 import { DISPLAY_MAX, DISPLAY_MIN } from '../core/config.mjs';
 
 const TOOL_DIR = path.resolve(import.meta.dirname, '..');
+
+// One place for the version: package.json is the source of truth, and both the
+// MCP server and --version report the same string.
+function toolVersion() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(TOOL_DIR, 'package.json'), 'utf8')).version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
 
 const COMMANDS = new Set([
   'render',
@@ -107,6 +117,7 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   --max-heap-pct <1-100>  render 后检查 LVGL 堆使用率，超过则 meta.budget.exceeded=true
   --all-pages       渲染所有页，另出一张 shot-sheet.png 总览
   --dry-run         new 只报告会改哪些文件，不落盘
+  --version         打印工具版本与 CLI 路径后退出
   --json            render / build / doctor / new 只向 stdout 输出结果 JSON，日志走 stderr
   --force           init 兼容参数（v1 不覆盖已有文件）
   --no-render       init 后不做空白页渲染
@@ -1002,7 +1013,7 @@ async function runFont(command, flags, positionals) {
 
   let result;
   if (command === 'font add') {
-    result = fontAdd(ctx, {
+    result = fontAddWithChanges(ctx, {
       fontPath: flags.font ?? positionals[0],
       preset: flags.preset,
       size: flags.size,
@@ -1033,6 +1044,10 @@ async function runFont(command, flags, positionals) {
   if (command === 'font add') {
     console.log(`[lvglui] font ${result.mode}/${result.dynamic ?? 'labels'}: ${result.file} (${result.chars} chars, ${result.glyphs} glyphs)`);
     if (result.fsPath) console.log(`[lvglui] 设备字体路径: ${result.fsPath}`);
+    for (const file of result.created ?? []) console.log(`  + ${file}`);
+    for (const file of result.updated ?? []) console.log(`  ~ ${file}`);
+    for (const file of result.removed ?? []) console.log(`  - ${file}`);
+    console.log('[lvglui] 字号是全局的：改动会重排所有使用该字体的文本；改完跑一次 render 确认布局。');
     if ((result.missing ?? []).length > 0) {
       console.log(`[lvglui] 缺字: ${result.missing.map((cp) => `U+${cp.toString(16).toUpperCase()}`).join(', ')}`);
     }
@@ -1055,6 +1070,12 @@ async function runFont(command, flags, positionals) {
  * @returns {Promise<number>} exit code (also assigned to process.exitCode)
  */
 export async function main(argv = process.argv.slice(2)) {
+  if (argv.length === 1 && (argv[0] === '--version' || argv[0] === '-v')) {
+    console.log(`lvglui ${toolVersion()} (${TOOL_DIR.split(path.sep).join('/')})`);
+    process.exitCode = 0;
+    return 0;
+  }
+
   const { command, flags, positionals } = parseArgs(argv);
 
   if (command === 'help') {

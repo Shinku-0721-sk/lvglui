@@ -17,7 +17,7 @@ import { parseDiagnostics } from './diagnostics.mjs';
 import { readTree, compactTree, collectNames } from './tree.mjs';
 import { writeIfChanged, sha256File, readText } from './fsutil.mjs';
 import { encodeRgb565Png } from './png.mjs';
-import { previewOverrides } from './font.mjs';
+import { fontStatus, previewOverrides } from './font.mjs';
 import { detectPages, pageFileStems } from './pages.mjs';
 import { composeSheet } from './sheet.mjs';
 
@@ -332,6 +332,30 @@ export function renderProject(ctx, options = {}) {
     );
   }
 
+  // Font coverage belongs in the render result: a stale subset shows up as
+  // boxes in the PNG with no other clue. Only the generated project font has a
+  // known character set; mode=off is an explicit choice and stays quiet.
+  let fontReport = null;
+  if (ctx.config?.font?.mode === 'project') {
+    const status = fontStatus(ctx);
+    const missing = status.missing ?? [];
+    fontReport = {
+      mode: 'project',
+      file: ctx.config.font.file ?? null,
+      glyphs: status.glyphs ?? 0,
+      missing,
+    };
+    if (!status.ok) {
+      warnings.push(`工程字体不可用：${(status.problems ?? ['未知原因']).join('；')}`);
+    } else if (missing.length > 0) {
+      const shown = missing.slice(0, 16).map((cp) => `U+${cp.toString(16).toUpperCase()}`);
+      warnings.push(
+        `工程字体缺 ${missing.length} 个字符（${shown.join(' ')}${missing.length > shown.length ? ' …' : ''}）；`
+          + `运行 lvglui font add --project ${ctx.root} 重新生成`,
+      );
+    }
+  }
+
   const shotPath = path.join(ctx.buildDir, 'shot.exe');
   const rawPath = path.join(ctx.buildDir, '.fb.bin');
   const pngPath = path.join(outDir, 'shot.png');
@@ -488,6 +512,7 @@ export function renderProject(ctx, options = {}) {
         );
       }
       const geometry = lastResultLine(run.stdout);
+      const pageMemory = memInfo(run.stdout);
       if (!geometry) {
         return fail(
           'shot',
@@ -552,6 +577,7 @@ export function renderProject(ctx, options = {}) {
         width: geometry.width,
         height: geometry.height,
         repaints: geometry.repaints,
+        ...(pageMemory ? { memory: pageMemory } : {}),
         compact,
         rawTree,
       });
@@ -589,6 +615,19 @@ export function renderProject(ctx, options = {}) {
     const names = [...new Set(records.flatMap((record) => collectNames(record.rawTree)))].sort();
     const first = records[0];
 
+    // Each page is its own process, so the heap is measured per page. The
+    // top-level value is the worst page: that is the one to optimize.
+    const memoryRows = records
+      .filter((record) => record.memory)
+      .map((record) => ({ page: record.name, ...record.memory }));
+    const worstMemory = memoryRows.reduce(
+      (best, row) => (best === null || (row.usedPct ?? 0) > (best.usedPct ?? 0) ? row : best),
+      null,
+    );
+    const allPagesMemory = memoryRows.length > 0
+      ? { lvgl: worstMemory, perPage: memoryRows }
+      : null;
+
     result.ok = true;
     result.png = sheetPng;
     result.pngPath = sheetPath;
@@ -597,6 +636,7 @@ export function renderProject(ctx, options = {}) {
     result.names = names;
     result.diagnostics = diagnostics;
     result.pages = records.map(({ compact, rawTree, ...record }) => record);
+    result.memory = allPagesMemory;
 
     const meta = {
       version: 1,
@@ -608,6 +648,8 @@ export function renderProject(ctx, options = {}) {
       idf: ctx.idf?.version ?? null,
       frames: frameCount,
       allPages: true,
+      ...(fontReport ? { font: fontReport } : {}),
+      ...(allPagesMemory ? { memory: allPagesMemory } : {}),
       buildMs: result.buildMs,
       shotMs: result.shotMs,
       encodeMs: result.encodeMs,
@@ -792,6 +834,7 @@ export function renderProject(ctx, options = {}) {
     ...(scroll ? { scroll } : {}),
     ...(memory ? { memory: { lvgl: memory } } : {}),
     ...(budget ? { budget } : {}),
+    ...(fontReport ? { font: fontReport } : {}),
     repaints,
     buildMs: result.buildMs,
     shotMs: result.shotMs,
@@ -835,5 +878,6 @@ export function renderProject(ctx, options = {}) {
     scroll,
     memory: memory ? { lvgl: memory } : null,
     budget,
+    font: fontReport,
   };
 }

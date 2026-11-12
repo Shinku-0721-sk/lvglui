@@ -140,7 +140,14 @@ void  ui_port_set_relay(bool on);
 
 Name widgets with `lv_obj_set_name(obj, "val_temp")` (the preview `lv_conf.h` forces
 `LV_USE_OBJ_NAME` on; enable it in firmware too). `render` then gives you `tree.json` along
-with the PNG.
+with the PNG; `x`/`y` there are relative to the parent, `absX`/`absY` are screen-absolute.
+
+**What an assistant may edit**: `ui_port.h` only gets additive declarations (no signature or
+type changes), `ui_port_stub.c` only its `#ifdef LVGLUI_HOST` preview values, and
+`ui_port_impl.c` is read-only. When a new getter is needed the assistant must report the exact
+line the firmware still needs instead of writing business code; `doctor` checks declared versus
+defined `ui_port_*` functions and warns that firmware will fail to link while an implementation
+is missing.
 
 ## Multi-page UIs
 
@@ -225,6 +232,8 @@ lvglui_apply_font(lv_screen_active());
 ```
 
 Font sources and the OFL license live in `assets/fonts/`. `font status` reports missing glyphs;
+`font add` lists the files it `created` / `updated` / `removed`, and the size is global: changing it
+reflows every text that uses the font, so render again afterwards;
 re-run `font add` after changing UI text.
 
 ### FreeType (optional advanced mode)
@@ -365,6 +374,8 @@ as `memory` / `budget`, so an assistant can be held to a limit without guessing.
 
 - `total` / `free` / `maxUsed` are bytes inside the LVGL pool; `usedCount` is the number of live
   allocations;
+- with `allPages`, `memory.lvgl` is the worst page and `memory.perPage` lists each page, so a
+  single heavy page can be optimised on its own;
 - `maxUsed` is this process's high-water mark — compare it across page switches to spot growth;
 - process RSS is not reported: it includes textures, fonts and unrelated allocations and would
   mislead;
@@ -386,6 +397,7 @@ Then restart DSH. After the restart:
 
 - `lvglui` appears in the skill list
 - `mcp__lvglui__*` tools appear (`detect_project`, `init_ui`, `render_ui`, `build_ui`, `doctor`,
+  `font`,
   `preview_ui`)
 
 Just ask:

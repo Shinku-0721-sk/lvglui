@@ -15,11 +15,13 @@ import { doctor as runDoctor } from '../core/doctor.mjs';
 import { initProject } from '../core/init.mjs';
 import { previewProject } from '../core/preview.mjs';
 import { renderProject } from '../core/render.mjs';
+import { fontAddWithChanges, fontOff, fontStatus } from '../core/font.mjs';
 import { findToolchain } from '../core/toolchain.mjs';
 
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const FALLBACK_PROTOCOL = PROTOCOL_VERSIONS[0];
-const SERVER_INFO = { name: 'lvglui', version: '1.0.0-rc.1' };
+const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+const SERVER_INFO = { name: 'lvglui', version: PKG.version };
 
 const PROJECT_ARG = {
   type: 'string',
@@ -106,6 +108,33 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: { project: PROJECT_ARG, width: WIDTH_ARG, height: HEIGHT_ARG },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'font',
+    description:
+      '管理工程字体：add 生成 Noto Sans SC 子集（或常用字 / FreeType 运行时字体）并接入主题，' +
+      'off 移除生成物，status 报告缺字。add 会返回 created/updated/removed 文件清单。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['add', 'off', 'status'], description: 'add / off / status' },
+        project: PROJECT_ARG,
+        preset: { type: 'string', description: '字体预设，当前仅 noto-sans-sc（默认）' },
+        size: { type: 'number', description: '字号 8-64，默认 16' },
+        dynamic: {
+          type: 'string',
+          enum: ['labels', 'common', 'freetype'],
+          description: 'labels 只含 UI 字符串；common 加 3755 个常用字；freetype 运行时解析 TTF',
+        },
+        chars: { type: 'string', description: '额外要包含的字符' },
+        fontPath: { type: 'string', description: 'TTF/OTF 源文件（默认内置 Noto Sans SC）' },
+        fsPath: { type: 'string', description: 'FreeType 在固件里的字体路径，如 A:/fonts/x.ttf' },
+        freetypeDir: { type: 'string', description: '预览侧 FreeType 安装前缀（含 include/freetype2 与 lib）' },
+        name: { type: 'string', description: '生成的字模符号名' },
+      },
+      required: ['action'],
       additionalProperties: false,
     },
   },
@@ -277,6 +306,34 @@ async function callTool(name, args = {}) {
     const tc = resolveToolchain(ctx);
     const d = runDoctor(ctx, { toolchain: tc.ok ? tc.toolchain : undefined });
     return toolResult(d, !d.ok);
+  }
+
+  if (name === 'font') {
+    const ctx = load(project, true, args);
+    if (!ctx.ok) return errorResult('工程探测失败', { problems: ctx.problems });
+    const action = args.action;
+    if (action === 'add') {
+      const r = fontAddWithChanges(ctx, {
+        fontPath: args.fontPath,
+        preset: args.preset,
+        size: args.size,
+        chars: args.chars,
+        name: args.name,
+        dynamic: args.dynamic,
+        fsPath: args.fsPath,
+        freetypeDir: args.freetypeDir,
+      });
+      return toolResult(r, !r.ok);
+    }
+    if (action === 'off') {
+      const r = fontOff(ctx);
+      return toolResult(r, !r.ok);
+    }
+    if (action === 'status') {
+      const r = fontStatus(ctx);
+      return toolResult(r, !r.ok);
+    }
+    return errorResult('font 需要 action: add | off | status');
   }
 
   if (name === 'preview_ui') {

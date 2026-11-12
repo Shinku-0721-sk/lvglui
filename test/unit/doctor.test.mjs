@@ -119,3 +119,47 @@ test('sdkconfig as a path string is parsed for the font check', (t) => {
   const r = doctor(project, { toolchain: { ok: true } });
   assert.equal(r.checks.find((c) => c.id === 'font').status, 'ok');
 });
+test('reports its own version and CLI path', (t) => {
+  const toolDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lvglui-tool-'));
+  t.after(() => fs.rmSync(toolDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(toolDir, 'package.json'), JSON.stringify({ version: '9.9.9' }));
+  const project = ctx(t, CLEAN_UI);
+  project.toolDir = toolDir;
+  const r = doctor(project);
+  const check = r.checks.find((c) => c.id === 'tool');
+  assert.equal(check.status, 'ok');
+  assert.match(check.message, /lvglui 9\.9\.9/);
+  assert.match(check.message, /cli\/lvglui\.mjs/);
+});
+
+test('uiPort warns when a declared accessor has no definition', (t) => {
+  const project = ctx(t, CLEAN_UI);
+  const port = path.join(project.root, 'components', 'ui_port');
+  fs.mkdirSync(path.join(port, 'include'), { recursive: true });
+  fs.writeFileSync(
+    path.join(port, 'include', 'ui_port.h'),
+    '#pragma once\nfloat ui_port_get_lux(void);\n',
+  );
+  fs.writeFileSync(
+    path.join(port, 'ui_port_impl.c'),
+    'float ui_port_get_temperature(void) { return 0; }\n',
+  );
+  project.portInclude = path.join(port, 'include');
+  project.configFile = 'lvglui.json';
+  const r = doctor(project);
+  const check = r.checks.find((c) => c.id === 'uiPort');
+  assert.equal(check.status, 'warn');
+  assert.match(check.message, /ui_port_get_lux/);
+  assert.match(check.message, /undefined reference/);
+});
+
+test('objName warns when firmware disables names but the UI uses them', (t) => {
+  const project = ctx(
+    t,
+    '#include "lvgl.h"\nvoid ui_start(lv_obj_t *p){ lv_obj_set_name(p, "x"); }\n',
+  );
+  const r = doctor(project);
+  const check = r.checks.find((c) => c.id === 'objName');
+  assert.equal(check.status, 'warn');
+  assert.match(check.message, /lv_obj_set_name/);
+});

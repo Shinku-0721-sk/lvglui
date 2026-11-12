@@ -6,7 +6,7 @@
 
 import fs from 'node:fs';
 
-const KEPT_FIELDS = ['name', 'cls', 'x', 'y', 'w', 'h', 'hidden', 'text', 'value', 'checked'];
+const KEPT_FIELDS = ['name', 'cls', 'x', 'y', 'w', 'h', 'absX', 'absY', 'hidden', 'text', 'value', 'checked'];
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);

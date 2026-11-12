@@ -119,7 +119,9 @@ void  ui_port_set_relay(bool on);
 > 扫 main 时还没有人引用 `ui_port_*`，那个 .obj 不会被拉进来，后面 app_ui 需要时就报
 > `undefined reference to 'ui_port_get_temperature'`。放进独立组件 `ui_port`（app_ui 依赖它）才对。
 
-控件命名用 `lv_obj_set_name(obj, "val_temp")`（预览 `lv_conf.h` 强制开启 `LV_USE_OBJ_NAME`；固件侧也要开），渲染时 `tree.json` 和 PNG 一起给你。
+控件命名用 `lv_obj_set_name(obj, "val_temp")`（预览 `lv_conf.h` 强制开启 `LV_USE_OBJ_NAME`；固件侧也要开），渲染时 `tree.json` 和 PNG 一起给你。`tree.json` 里的 `x`/`y` 相对父容器，`absX`/`absY` 是相对屏幕的绝对坐标。
+
+**AI 的编辑边界**：`ui_port.h` 只允许追加声明（不改已有签名/类型），`ui_port_stub.c` 只允许改 `#ifdef LVGLUI_HOST` 内的预览桩，`ui_port_impl.c` 只读。AI 需要新 getter 时应报告“固件需在 `ui_port_impl.c` 补哪一行”，而不是替用户实现业务；`doctor` 会检查头文件声明与实现是否漂移，缺实现时明确提示固件会链接失败。
 
 ## 多页界面
 
@@ -179,7 +181,7 @@ components/app_ui/include/ui_font.h
 lvglui_apply_font(lv_screen_active());
 ```
 
-字体原件和 OFL 许可证在 `assets/fonts/`。`font status` 会报告缺字；改完 UI 文案后重新跑一次 `font add`。
+字体原件和 OFL 许可证在 `assets/fonts/`。`font status` 会报告缺字；改完 UI 文案后重新跑一次 `font add`。`font add` 会列出 `created` / `updated` / `removed` 的文件；字号是全局的，改字号会重排所有使用该字体的文本，改完重新 render 确认布局。
 
 ### FreeType（可选高级模式）
 
@@ -278,6 +280,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 不用靠猜。
 
 - `total` / `free` / `maxUsed` 是 LVGL 池内的字节数，`usedCount` 是当前存活分配数；
+- `allPages` 时 `memory.lvgl` 取最坏的一页，`memory.perPage` 列出每页的数字——某页特别高时按页优化；
 - `maxUsed` 是本进程的峰值——切页前后对比它，能看出堆是否只涨不落；
 - 不报告进程 RSS：它混了纹理、字体和无关分配，容易误导；
 - preview 在 attach 后和每次切页后打印同一行，并追加到 `.lvglui/build/preview-mem.log`（CLI 启动窗口时 stdout 被忽略，日志文件是给人和脚本看的落点）；
@@ -294,7 +297,7 @@ node cli/lvglui.mjs dsh install
 然后重启 DSH。重启后：
 
 - 技能列表里出现 `lvglui`
-- 工具里出现 `mcp__lvglui__*`（`detect_project`、`init_ui`、`render_ui`、`build_ui`、`doctor`、`preview_ui`）
+- 工具里出现 `mcp__lvglui__*`（`detect_project`、`init_ui`、`render_ui`、`build_ui`、`doctor`、`font`、`preview_ui`）
 
 直接说：
 

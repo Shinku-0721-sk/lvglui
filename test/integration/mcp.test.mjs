@@ -82,7 +82,7 @@ function startServer() {
   };
 }
 
-test('MCP negotiates 2025-03-26, lists six tools and answers ping', async () => {
+test('MCP negotiates 2025-03-26, lists seven tools and answers ping', async () => {
   const srv = startServer();
   try {
     const init = await srv.request('initialize', {
@@ -105,6 +105,7 @@ test('MCP negotiates 2025-03-26, lists six tools and answers ping', async () => 
       'build_ui',
       'detect_project',
       'doctor',
+      'font',
       'init_ui',
       'preview_ui',
       'render_ui',

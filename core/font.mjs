@@ -5,6 +5,7 @@
 // a C font, and the same C file is compiled into both preview and firmware.
 // `font off` removes the generated artifacts and the theme hook.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -622,6 +623,72 @@ export function fontAdd(ctx, options = {}) {
  * Remove the generated font and its theme hook, then mark the project as
  * "no font". Files are only deleted when they live under the UI component.
  */
+
+// `font add` rewrites several files; return the actual delta so callers can
+// tell the user what changed instead of a single summary line. The snapshot
+// only covers font-owned files plus the config, so it stays cheap.
+function hashFile(abs) {
+  try {
+    return crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+function fontFileSet(root, uiDir) {
+  const set = new Set([
+    path.join(root, 'lvglui.json'),
+    path.join(uiDir, 'CMakeLists.txt'),
+    path.join(uiDir, 'include', HEADER_NAME),
+    path.join(uiDir, 'src', 'ui_font_apply.c'),
+    path.join(uiDir, 'src', 'ui_theme.c'),
+  ]);
+  const walk = (dir, depth) => {
+    if (depth > 2) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const abs = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(abs, depth + 1);
+      else set.add(abs);
+    }
+  };
+  walk(path.join(uiDir, 'fonts'), 0);
+  return [...set];
+}
+
+/** fontAdd plus the files it created, updated and removed (relative to root). */
+export function fontAddWithChanges(ctx, options = {}) {
+  const root = path.resolve(ctx?.root ?? '.');
+  const uiDir = path.resolve(root, ctx?.uiDir ?? '');
+  const before = new Map(fontFileSet(root, uiDir).map((abs) => [abs, hashFile(abs)]));
+  const result = fontAdd(ctx, options);
+  if (!result.ok) return result;
+  const after = new Map(fontFileSet(root, uiDir).map((abs) => [abs, hashFile(abs)]));
+  const rel = (abs) => path.relative(root, abs).split(path.sep).join('/');
+  const created = [];
+  const updated = [];
+  const removed = [];
+  for (const [abs, hash] of after) {
+    const previous = before.get(abs) ?? null;
+    if (previous === null) created.push(rel(abs));
+    else if (previous !== hash) updated.push(rel(abs));
+  }
+  for (const [abs, hash] of before) {
+    if (hash !== null && !after.has(abs)) removed.push(rel(abs));
+  }
+  return {
+    ...result,
+    created: created.sort(),
+    updated: updated.sort(),
+    removed: removed.sort(),
+  };
+}
+
 export function fontOff(ctx) {
   if (!isPlainObject(ctx) || ctx.ok === false) {
     return { ok: false, removed: [], problems: ctx?.problems ?? ['工程上下文无效'] };

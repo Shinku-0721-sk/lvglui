@@ -14,3 +14,9 @@ test('collects names recursively', () => {
   const t = { root: { name: 'a', children: [{ name: 'b', children: [] }] } };
   assert.deepEqual(collectNames(t).sort(), ['a', 'b']);
 });
+test('keeps absolute coordinates from the host dump', () => {
+  const t = { root: { cls: 'lv_obj', x: 4, y: 5, absX: 34, absY: 45, children: [] } };
+  const c = compactTree(t);
+  assert.equal(c.root.absX, 34);
+  assert.equal(c.root.absY, 45);
+});

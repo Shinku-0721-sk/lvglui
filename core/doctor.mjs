@@ -10,8 +10,9 @@ import path from 'node:path';
 
 import { parseSdkconfig } from './kconfig.mjs';
 import { readText } from './fsutil.mjs';
+import { fontStatus } from './font.mjs';
 
-const CJK_FONT_KEY = 'LV_FONT_SOURCE_HAN_SANS_SC_16_CJK';
+const OBJ_NAME_KEY = 'LV_USE_OBJ_NAME';
 const PLATFORM_INCLUDES = /^(?:driver\/|esp_|freertos\/|sdkconfig\.h$)/;
 const ENTRY_RE = /^[A-Za-z_]\w*$/;
 
@@ -327,46 +328,216 @@ function checkToolchain(toolchain) {
 function checkUiPort(ctx) {
   // The header lives in the ui_port component (components/ui_port/include) in
   // the layout init generates; older projects keep it in the UI component.
+  let header = '';
   if (typeof ctx?.portInclude === 'string' && ctx.portInclude !== '') {
-    return makeCheck('uiPort', 'ok', `ui_port.h：${path.join(ctx.portInclude, 'ui_port.h')}`);
+    header = path.join(ctx.portInclude, 'ui_port.h');
+  } else if (typeof ctx?.uiDir === 'string' && ctx.uiDir !== '') {
+    header = path.join(ctx.uiDir, 'include', 'ui_port.h');
   }
-  if (typeof ctx?.uiDir !== 'string' || ctx.uiDir === '') {
-    return makeCheck('uiPort', 'warn', 'UI 目录未确定，未检查 ui_port.h');
-  }
-  if (ctx?.configFile == null || ctx.configFile === '') {
+  if (header === '' || !fs.existsSync(header)) {
+    if (typeof ctx?.uiDir !== 'string' || ctx.uiDir === '') {
+      return makeCheck('uiPort', 'warn', 'UI 目录未确定，未检查 ui_port.h');
+    }
+    if (ctx?.configFile == null || ctx.configFile === '') {
+      return makeCheck(
+        'uiPort',
+        'warn',
+        '未注入 UI 层：没有 ui_port.h，先运行 lvglui init 生成 UI 组件和 ui_port 组件',
+        { file: ctx.uiDir },
+      );
+    }
     return makeCheck(
       'uiPort',
       'warn',
-      '未注入 UI 层：没有 ui_port.h，先运行 lvglui init 生成 UI 组件和 ui_port 组件',
-      { file: ctx.uiDir },
+      `未找到 ui_port.h：期望 ${path.join(path.dirname(ctx.uiDir), 'ui_port', 'include', 'ui_port.h')} 或 ${header}；` +
+        'ui_port 组件缺失时固件会报 undefined reference to ui_port_*',
+      { file: header },
     );
   }
-  const header = path.join(ctx.uiDir, 'include', 'ui_port.h');
+
+  // Declared-but-unimplemented accessors are the quiet failure mode: the host
+  // build links against ui_port_stub.c, while the firmware build fails much
+  // later with undefined reference. Report that gap here instead.
+  const declarations = declaredUiPortFunctions(readText(header) ?? '');
+  const impl = findUiPortImplementation(ctx, header);
+  if (declarations.length === 0) {
+    return makeCheck('uiPort', 'ok', `ui_port.h：${header}`, { file: header });
+  }
+  if (impl === null) {
+    return makeCheck(
+      'uiPort',
+      'warn',
+      `ui_port.h 声明了 ${declarations.length} 个函数，但找不到 ui_port_impl.c；`
+        + '预览可用（stub），固件会 undefined reference',
+      { file: header, declared: declarations },
+    );
+  }
+  const defined = definedFunctions(readText(impl) ?? '');
+  const missing = declarations.filter((name) => !defined.has(name));
+  if (missing.length === 0) {
+    return makeCheck(
+      'uiPort',
+      'ok',
+      `ui_port.h：${declarations.length} 个声明均已在 ${path.relative(ctx.root, impl).replace(/\\/g, '/')} 实现`,
+      { file: header, impl },
+    );
+  }
   return makeCheck(
     'uiPort',
     'warn',
-    `未找到 ui_port.h：期望 ${path.join(path.dirname(ctx.uiDir), 'ui_port', 'include', 'ui_port.h')} 或 ${header}；` +
-      'ui_port 组件缺失时固件会报 undefined reference to ui_port_*',
-    { file: header },
+    `ui_port.h 声明了 ${declarations.length} 个函数，${path.relative(ctx.root, impl).replace(/\\/g, '/')} 缺定义：`
+      + `${missing.join(', ')}；预览由 stub 提供，固件会 undefined reference`,
+    { file: header, impl, missing },
   );
 }
 
+function declaredUiPortFunctions(source) {
+  const clean = stripComments(source);
+  const found = new Set();
+  const re = /(?:^|\n)[ \t]*(?:[A-Za-z_][A-Za-z0-9_]*[ \t\*]+)+(ui_port_[A-Za-z0-9_]+)[ \t]*\([^;{}]*\)[ \t]*;/g;
+  for (const match of clean.matchAll(re)) found.add(match[1]);
+  return [...found];
+}
+
+function definedFunctions(source) {
+  const clean = stripComments(source);
+  const found = new Set();
+  const re = /\b(ui_port_[A-Za-z0-9_]+)\s*\([^;{}]*\)\s*\{/g;
+  for (const match of clean.matchAll(re)) found.add(match[1]);
+  return found;
+}
+
+function findUiPortImplementation(ctx, header) {
+  const candidates = [
+    path.join(path.dirname(path.dirname(header)), 'ui_port_impl.c'),
+    typeof ctx?.uiDir === 'string' ? path.join(ctx.uiDir, 'src', 'ui_port_impl.c') : '',
+    typeof ctx?.uiDir === 'string' ? path.join(ctx.uiDir, 'ui_port_impl.c') : '',
+  ].filter((value) => value !== '');
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 function checkFont(ctx) {
-  const configCjk = ctx?.config?.font?.cjk === true;
-  const map = kconfigMap(ctx?.sdkconfig);
-  const value = kconfigValue(map, CJK_FONT_KEY);
-  if (configCjk || isEnabled(value)) {
+  const config = ctx?.config?.font ?? {};
+  const mode = config.mode ?? 'off';
+
+  // A project font is a completely different thing from LVGL's built-in CJK
+  // subset: when the generated C font is in use, the built-in font being off
+  // is the normal state, not a warning.
+  if (mode === 'project') {
+    const status = fontStatus(ctx);
+    if (!status.ok) {
+      return makeCheck(
+        'font',
+        'fail',
+        `工程字体配置存在但不可用：${(status.problems ?? ['未知原因']).join('；')}`,
+        { mode, file: config.file ?? null },
+      );
+    }
+    const missing = status.missing ?? [];
+    if (missing.length > 0) {
+      const shown = missing.slice(0, 12).map((cp) => `U+${cp.toString(16).toUpperCase()}`);
+      return makeCheck(
+        'font',
+        'warn',
+        `工程字体缺 ${missing.length} 个字符（${shown.join(' ')}${missing.length > shown.length ? ' …' : ''}）；`
+          + 'UI 文本变了，重新运行 lvglui font add --project <工程> 生成',
+        { mode, file: config.file ?? null, missing: missing.slice(0, 64) },
+      );
+    }
     return makeCheck(
       'font',
       'ok',
-      configCjk ? 'lvglui.json 强制启用 CJK 字体' : `${CJK_FONT_KEY}=y`,
+      `工程字体已启用：${config.file}（${status.glyphs} 字形，覆盖当前 UI 文本）`,
+      { mode, file: config.file ?? null, glyphs: status.glyphs },
     );
   }
+
+  if (mode === 'cjk') {
+    return makeCheck('font', 'ok', 'lvglui.json 启用 LVGL 内置 CJK 字体（覆盖不完整，推荐 font add）', {
+      mode,
+    });
+  }
+
+  if (mode === 'freetype') {
+    return makeCheck(
+      'font',
+      'ok',
+      `FreeType 运行时字体：${config.file || '(未指定)'}；固件需 LV_USE_FREETYPE、esp_freetype 与文件系统`,
+      { mode, file: config.file ?? null },
+    );
+  }
+
+  // mode == "off": ASCII is the deliberate default. Warn only when the UI
+  // actually contains non-ASCII text, instead of always nagging about the
+  // built-in CJK font.
+  const status = fontStatus(ctx);
+  const missing = (status.missing ?? []).filter((cp) => cp > 0x7e);
+  if (missing.length > 0) {
+    const shown = missing.slice(0, 12).map((cp) => `U+${cp.toString(16).toUpperCase()}`);
+    return makeCheck(
+      'font',
+      'warn',
+      `UI 有 ${missing.length} 个非 ASCII 字符，但 font.mode=off（LVGL 只画 ASCII）；`
+        + '运行 lvglui font add --preset noto-sans-sc --size <字号> 生成工程字体',
+      { mode, missing: missing.slice(0, 32), shown },
+    );
+  }
+  return makeCheck('font', 'ok', '未启用工程字体（font.mode=off），当前 UI 文本为纯 ASCII', { mode });
+}
+
+// The preview build forces LV_USE_OBJ_NAME on (tree.json needs the names), but
+// the firmware may have it off. Then lv_obj_set_name() becomes a no-op and any
+// name-based contract silently fails on the board while the preview looks fine.
+function checkObjName(ctx) {
+  const map = kconfigMap(ctx?.sdkconfig);
+  const value = kconfigValue(map, OBJ_NAME_KEY);
+  if (isEnabled(value)) return makeCheck('objName', 'ok', `${OBJ_NAME_KEY}=y，控件名在固件与预览中一致`);
+
+  const uiDir = ctx?.uiDir;
+  if (typeof uiDir !== 'string' || uiDir === '' || !isDirectory(uiDir)) {
+    return makeCheck('objName', 'warn', `${OBJ_NAME_KEY} 未启用，且 UI 目录未确定，未检查 lv_obj_set_name 使用`);
+  }
+  const sources = walkSources(uiDir, new Set(['.c', '.h']));
+  const users = [];
+  for (const file of sources) {
+    const source = stripComments(readText(file) ?? '');
+    if (/\blv_obj_set_name\s*\(/.test(source)) {
+      users.push(path.relative(uiDir, file).replace(/\\/g, '/'));
+    }
+  }
+  if (users.length === 0) {
+    return makeCheck('objName', 'ok', `${OBJ_NAME_KEY} 未启用，UI 也没有使用 lv_obj_set_name()`, { value: value ?? null });
+  }
   return makeCheck(
-    'font',
+    'objName',
     'warn',
-    '未启用 CJK 字体（sdkconfig 无 CONFIG_LV_FONT_SOURCE_HAN_SANS_SC_16_CJK=y，config.font.cjk 非 true）',
-    { value: value ?? null },
+    `${OBJ_NAME_KEY} 未启用，但 UI 在 ${users.join(', ')} 里调用了 lv_obj_set_name()；`
+      + '控件名只会在预览里生效，固件上为空。请在 sdkconfig 打开 CONFIG_LV_USE_OBJ_NAME=y（或让页面用 #if LV_USE_OBJ_NAME 包住命名）',
+    { value: value ?? null, files: users },
+  );
+}
+
+// Users (and agents) need to know where the tool itself lives: the MCP server
+// does not put `lvglui` on PATH, and print-checks otherwise only describe the
+// project.
+function checkTool(ctx) {
+  const toolDir = typeof ctx?.toolDir === 'string' ? ctx.toolDir : '';
+  if (toolDir === '') return makeCheck('tool', 'warn', '工具目录未知，无法报告 CLI 路径');
+  let version = null;
+  try {
+    version = JSON.parse(readText(path.join(toolDir, 'package.json')) ?? '{}').version ?? null;
+  } catch {
+    version = null;
+  }
+  const cli = path.join(toolDir, 'cli', 'lvglui.mjs');
+  return makeCheck(
+    'tool',
+    'ok',
+    `lvglui ${version ?? '(未知版本)'}；CLI：node ${cli.split(path.sep).join('/')}`,
+    { version, toolDir, cli, node: process.version },
   );
 }
 
@@ -379,6 +550,7 @@ function checkFont(ctx) {
 export function doctor(ctx, options = {}) {
   const opts = isPlainObject(options) ? options : {};
   const checks = [
+    checkTool(ctx),
     checkProject(ctx),
     checkIdf(ctx),
     checkLvgl(ctx),
@@ -390,6 +562,7 @@ export function doctor(ctx, options = {}) {
     checkToolchain(opts.toolchain),
     checkUiPort(ctx),
     checkFont(ctx),
+    checkObjName(ctx),
   ];
 
   const problems = checks.filter((check) => check.status === 'fail');
