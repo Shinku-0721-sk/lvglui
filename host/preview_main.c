@@ -53,6 +53,7 @@ static const char *           (*p_page_name)(int);
 static int                    (*p_page_index)(const char *);
 static int                    (*p_set_page)(int);
 static int                    (*p_goto_page)(int);
+static int                    (*p_scroll)(int, int, int, int);
 
 /* Page navigation (optional ui_page_* contract). g_page_index -1 means the
  * entry function chose the screen; names are kept in UTF-8 for the ABI. */
@@ -664,7 +665,7 @@ static void unload_ui(void)
         g_dll = NULL;
         p_attach = NULL; p_tick = NULL; p_pixels = NULL; p_detach = NULL;
         p_page_total = NULL; p_page_name = NULL; p_page_index = NULL;
-        p_set_page = NULL; p_goto_page = NULL;
+        p_set_page = NULL; p_goto_page = NULL; p_scroll = NULL;
         g_page_total = 0;
     }
     if(g_live_path[0]) {
@@ -723,6 +724,7 @@ static int load_ui(void)
     p_page_index = (int (*)(const char *))  GetProcAddress(lib, "ui_page_index");
     p_set_page   = (int (*)(int))           GetProcAddress(lib, "ui_set_page");
     p_goto_page  = (int (*)(int))           GetProcAddress(lib, "ui_goto_page");
+    p_scroll     = (int (*)(int, int, int, int)) GetProcAddress(lib, "ui_wheel");
 
     /* Resolve the page before attach so the very first screen is the one the
        user asked for; on hot reload the page they are looking at wins. */
@@ -1019,6 +1021,25 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             LRESULT hit = DefWindowProcW(hwnd, msg, wp, lp);
             if(hit == HTCLIENT) hit = HTCAPTION;
             return hit;
+        }
+        case WM_MOUSEWHEEL: {
+            /* Wheel: hand the client point and pixel deltas to ui.dll, which
+             * hit-tests the deepest scrollable object and moves its offset.
+             * delta > 0 means "away from the user" (show earlier content),
+             * hence the negated dy. */
+            POINT pt;
+            pt.x = (short)LOWORD(lp);
+            pt.y = (short)HIWORD(lp);
+            ScreenToClient(hwnd, &pt);
+            if(p_scroll) {
+                int delta = GET_WHEEL_DELTA_WPARAM(wp);
+                int notches = delta / WHEEL_DELTA;
+                int step = 40;
+                if(notches == 0) notches = delta > 0 ? 1 : -1;
+                if(wp & MK_SHIFT) p_scroll(pt.x, pt.y, -notches * step, 0);
+                else p_scroll(pt.x, pt.y, 0, -notches * step);
+            }
+            return 0;
         }
         case WM_KEYDOWN:
             if(wp == VK_ESCAPE) PostQuitMessage(0);

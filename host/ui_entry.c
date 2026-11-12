@@ -277,6 +277,144 @@ int ui_goto_page(int index)
 #endif
 }
 
+/* ---- 滚动 --------------------------------------------------------------
+ * LVGL 只画可视区：滚动容器超出视口的部分被裁剪，不会进入帧缓冲。所以
+ * “滚到某个位置再截图”不需要新的渲染路径，只要移动滚动偏移，得到的就是
+ * 固件在同一偏移下的同一批像素。 */
+
+static bool vertical_scrollable(lv_obj_t * obj)
+{
+    return lv_obj_has_flag(obj, LV_OBJ_FLAG_SCROLLABLE)
+           && (lv_obj_get_scroll_dir(obj) & LV_DIR_VER) != 0;
+}
+
+static bool has_vertical_overflow(lv_obj_t * obj)
+{
+    return lv_obj_get_scroll_top(obj) > 0 || lv_obj_get_scroll_bottom(obj) > 0;
+}
+
+/* 深度优先找第一个“能竖着滚、且有内容可滚”的对象。 */
+static lv_obj_t * first_scrollable(lv_obj_t * obj)
+{
+    if(!obj) return NULL;
+    if(vertical_scrollable(obj) && has_vertical_overflow(obj)) return obj;
+    uint32_t n = lv_obj_get_child_count(obj);
+    for(uint32_t i = 0; i < n; ++i) {
+        lv_obj_t * found = first_scrollable(lv_obj_get_child(obj, (int32_t)i));
+        if(found) return found;
+    }
+    return NULL;
+}
+
+/* (x,y) 处最深的、可竖滚的对象。不用 lv_obj_hit_test：它要求 CLICKABLE，
+   而滚动容器本身常常不可点击，它下面的 label 也不可点击。 */
+static lv_obj_t * scrollable_at(lv_obj_t * obj, const lv_point_t * p)
+{
+    if(!obj) return NULL;
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+    if(p->x < a.x1 || p->x > a.x2 || p->y < a.y1 || p->y > a.y2) return NULL;
+
+    lv_obj_t * found = vertical_scrollable(obj) ? obj : NULL;
+    uint32_t n = lv_obj_get_child_count(obj);
+    for(uint32_t i = 0; i < n; ++i) {
+        lv_obj_t * child = lv_obj_get_child(obj, (int32_t)i);
+        if(!child || lv_obj_is_hidden(child)) continue;
+        lv_obj_t * sub = scrollable_at(child, p);
+        if(sub) found = sub;
+    }
+    return found;
+}
+
+int ui_scroll(const char * spec)
+{
+    if(!s_attached || !s_screen) return -1;
+    if(!spec || !spec[0]) {
+        fprintf(stderr, "[ui] scroll: 空参数\n");
+        return -1;
+    }
+
+    char name[64] = {0};
+    const char * value = spec;
+    const char * eq = strchr(spec, '=');
+    if(eq) {
+        size_t len = (size_t)(eq - spec);
+        if(len == 0 || len >= sizeof(name)) {
+            fprintf(stderr, "[ui] scroll: 无法解析 \"%s\"\n", spec);
+            return -1;
+        }
+        memcpy(name, spec, len);
+        name[len] = 0;
+        value = eq + 1;
+    }
+
+    lv_obj_t * target = NULL;
+    if(name[0]) {
+        target = lv_obj_find_by_name(s_screen, name);
+        if(!target) {
+            fprintf(stderr, "[ui] scroll: 找不到名为 \"%s\" 的控件\n", name);
+            return -1;
+        }
+        if(!vertical_scrollable(target)) {
+            fprintf(stderr, "[ui] scroll: \"%s\" 不能竖向滚动\n", name);
+            return -1;
+        }
+    }
+    else {
+        target = first_scrollable(s_screen);
+        if(!target) {
+            fprintf(stderr, "[ui] scroll: 当前屏幕没有可竖向滚动的内容\n");
+            return -1;
+        }
+    }
+
+    int32_t y;
+    int32_t current = lv_obj_get_scroll_y(target);
+    if(strcmp(value, "bottom") == 0) {
+        y = current + lv_obj_get_scroll_bottom(target);
+    }
+    else if(strcmp(value, "top") == 0) {
+        y = 0;
+    }
+    else {
+        char * end = NULL;
+        long parsed = strtol(value, &end, 10);
+        if(!end || *end != 0 || end == value) {
+            fprintf(stderr, "[ui] scroll: \"%s\" 不是数字、top 或 bottom\n", value);
+            return -1;
+        }
+        y = (int32_t)parsed;
+    }
+
+    lv_obj_scroll_to_y(target, y, LV_ANIM_OFF);
+    lv_obj_update_layout(target);
+    lv_refr_now(s_disp);
+    s_version++;
+
+    printf("scroll %s %d %d\n", name[0] ? name : "-",
+           (int)lv_obj_get_scroll_x(target), (int)lv_obj_get_scroll_y(target));
+    return 0;
+}
+
+int ui_wheel(int x, int y, int dx, int dy)
+{
+    if(!s_attached || !s_screen) return -1;
+    lv_point_t p = { (lv_coord_t)x, (lv_coord_t)y };
+    lv_obj_t * target = scrollable_at(s_screen, &p);
+    if(!target) return -1;
+    if(dx == 0 && dy == 0) return -1;
+
+    if(dy) {
+        if((lv_obj_get_scroll_dir(target) & LV_DIR_VER) == 0) return -1;
+        lv_obj_scroll_to_y(target, lv_obj_get_scroll_y(target) + dy, LV_ANIM_ON);
+    }
+    if(dx) {
+        if((lv_obj_get_scroll_dir(target) & LV_DIR_HOR) == 0) return -1;
+        lv_obj_scroll_to_x(target, lv_obj_get_scroll_x(target) + dx, LV_ANIM_ON);
+    }
+    return 0;
+}
+
 /* 建根控件：有页面契约且指定了页就走页面，否则走单入口函数。 */
 static lv_obj_t * build_root(void)
 {

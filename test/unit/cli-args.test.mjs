@@ -84,3 +84,19 @@ test('importing the CLI does not execute main', () => {
   assert.equal(run.stdout.trim(), 'imported');
   assert.equal(run.stderr, '');
 });
+test('--scroll is a render-only value flag', () => {
+  const parsed = parseArgs(['render', '--scroll', 'fixture.page=bottom']);
+  assert.equal(parsed.flags.scroll, 'fixture.page=bottom');
+  assert.equal(parseArgs(['render', '--scroll=120']).flags.scroll, '120');
+  assert.equal(parseArgs(['render', '--scroll', '120', '--all-pages']).flags.allPages, true);
+});
+
+function cliExit(args) {
+  return spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', timeout: 60000 }).status;
+}
+
+test('--scroll validation rejects preview, --all-pages and empty values', () => {
+  assert.equal(cliExit(['preview', '--scroll', '120']), 2);
+  assert.equal(cliExit(['render', '--scroll', '120', '--all-pages']), 2);
+  assert.equal(cliExit(['render', '--scroll', '']), 2);
+});

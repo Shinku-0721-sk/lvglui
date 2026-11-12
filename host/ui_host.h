@@ -57,6 +57,22 @@ UI_EXPORT int         ui_page_index(const char *name);
  * index / build failed". */
 UI_EXPORT int         ui_goto_page(int index);
 
+/* ---- scrolling ---------------------------------------------------------
+ * LVGL only ever draws the visible viewport; the off-screen part of a
+ * scrollable object is clipped and never reaches the framebuffer. Moving the
+ * scroll offset is therefore all a scrolled screenshot needs: the same
+ * engine, the same clip, the same pixels as the firmware at that offset.
+ */
+/* `spec`: "<y>" scrolls the first vertically scrollable object on the active
+ * screen, "<name>=<y>" scrolls the named widget (needs LV_USE_OBJ_NAME), and
+ * "...=bottom" / "...=top" jump to the end. On success prints
+ * `scroll <name|-> <x> <y>` to stdout and returns 0; -1 on a bad spec/target. */
+UI_EXPORT int         ui_scroll(const char *spec);
+/* Preview wheel: scroll the deepest scrollable object under (x, y) by the
+ * pixel deltas. Returns 0 when something moved, -1 when nothing there
+ * scrolls. */
+UI_EXPORT int         ui_wheel(int x, int y, int dx, int dy);
+
 #ifdef __cplusplus
 }
 #endif

@@ -41,7 +41,7 @@ const COMMANDS = new Set([
   'help',
 ]);
 
-const VALUE_FLAGS = new Set(['project', 'width', 'height', 'frames', 'out', 'port', 'preset', 'size', 'chars', 'name', 'font', 'dynamic', 'fs-path', 'freetype-dir', 'page']);
+const VALUE_FLAGS = new Set(['project', 'width', 'height', 'frames', 'out', 'port', 'preset', 'size', 'chars', 'name', 'font', 'dynamic', 'fs-path', 'freetype-dir', 'page', 'scroll']);
 const NUMBER_FLAGS = new Set(['width', 'height', 'frames', 'port', 'size']);
 const KNOWN_FLAGS = new Set([
   'project',
@@ -64,6 +64,7 @@ const KNOWN_FLAGS = new Set([
   'fsPath',
   'freetypeDir',
   'page',
+  'scroll',
   'allPages',
   'dryRun',
   'help',
@@ -101,6 +102,7 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   --no-build        渲染时跳过编译，直接复用已有 shot.exe
   --topmost        实时预览窗口置顶（Ctrl+Alt+T 也可以随时切换）
   --page <name>     render 只渲染某一页；preview 用它作为启动页（需要 ui_page_* 契约）
+  --scroll <spec>   render 先滚动再截图：<y>、<name>=<y>、<name>=bottom（不能和 --all-pages 同用）
   --all-pages       渲染所有页，另出一张 shot-sheet.png 总览
   --dry-run         new 只报告会改哪些文件，不落盘
   --json            render / build / doctor / new 只向 stdout 输出结果 JSON，日志走 stderr
@@ -216,6 +218,7 @@ function exitForRender(result) {
       return 1;
     case 'ctx':
     case 'toolchain':
+    case 'scroll':
       return 2;
     default:
       return 3;
@@ -390,6 +393,7 @@ async function runRender(flags) {
     outDir: flags.out,
     page: flags.page,
     allPages: flags.allPages === true,
+    scroll: flags.scroll,
   });
   const value = renderResult(result);
 

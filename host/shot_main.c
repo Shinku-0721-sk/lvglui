@@ -11,11 +11,14 @@
  *
  *   shot.exe [--out preview.png] [--frames 12] [--tree tree.json]
  *            [--raw frame.bin] [--page N] [--list-pages pages.txt]
+ *            [--scroll <y>|<name>=<y>|<...>=bottom]
  *
  * `--page N` renders one page of the optional ui_page_* contract;
- * `--list-pages` only writes the page names (one per line, render order) and
- * exits. Multi-page rendering runs one process per page: each run gets a
- * fresh LVGL engine, so no state leaks between pages.
+ * `--scroll` moves the page's scroll offset before the frames are sampled,
+ * so the PNG shows the same visible viewport the firmware shows at that
+ * offset. `--list-pages` only writes the page names (one per line, render
+ * order) and exits. Multi-page rendering runs one process per page: each run
+ * gets a fresh LVGL engine, so no state leaks between pages.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,6 +55,7 @@ int main(int argc, char **argv)
     const char *raw = NULL;
     const char *tree_path = NULL;
     const char *pages_path = NULL;
+    const char *scroll_spec = NULL;
     int frames = 12;
     int page = -1;
 
@@ -62,6 +66,7 @@ int main(int argc, char **argv)
         else if(strcmp(argv[i], "--frames") == 0 && i + 1 < argc) frames = atoi(argv[++i]);
         else if(strcmp(argv[i], "--page") == 0 && i + 1 < argc) page = atoi(argv[++i]);
         else if(strcmp(argv[i], "--list-pages") == 0 && i + 1 < argc) pages_path = argv[++i];
+        else if(strcmp(argv[i], "--scroll") == 0 && i + 1 < argc) scroll_spec = argv[++i];
     }
 
     if(pages_path) return list_pages(pages_path);
@@ -74,6 +79,11 @@ int main(int argc, char **argv)
     if(ui_attach(LVGLUI_WIDTH, LVGLUI_HEIGHT) != 0) {
         fprintf(stderr, "ui_attach failed\n");
         return 1;
+    }
+    if(scroll_spec && ui_scroll(scroll_spec) != 0) {
+        fprintf(stderr, "scroll failed: %s\n", scroll_spec);
+        ui_detach();
+        return 2;
     }
     for(int i = 0; i < frames; ++i) ui_tick(FRAME_MS);
 

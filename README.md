@@ -137,6 +137,7 @@ lv_obj_t   *ui_page_show(int index, lv_obj_t *parent);
 ```bash
 lvglui render --all-pages          # 每页 shot-<name>.png + tree-<name>.json，另出 shot-sheet.png 总览
 lvglui render --page settings      # 只渲染这一页，仍写 shot.png / tree.json
+lvglui render --scroll 120         # 先把内容滚到 120px 再截图（可视区与固件同一套裁剪）
 ```
 
 - 总览图按 `meta.json` 的 `pages` 顺序排：≤4 页两列，否则四列，格间距 8px，底色 `#101820`，不放文字标签
@@ -232,6 +233,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 - `--out <dir>`：输出**目录**（不是 PNG 文件路径）
 - `--no-build`：复用已有 `shot.exe`（shot 缺失时会自动构建）
 - `--page <name|n>`：`render` 只渲染某一页；`preview` 用它作为启动页（页名，或从 1 开始的页号；需要 `ui_page_*` 契约）
+- `--scroll <spec>`：`render` 先滚动再截图，写入 `meta.json.scroll`；`120` 滚当前屏第一个可竖滚对象，`name=120` 指定控件，`name=bottom`/`name=top` 跳到端点（需要控件设置 `lv_obj_set_name`）；不能和 `--all-pages` 同用
 - `--all-pages`：渲染所有页，另出 `shot-sheet.png` 总览
 - `--topmost`：`preview` 窗口置顶（开着窗口时也可随时按 `Ctrl+Alt+T` 切换）
 - `--json`：`render/build/doctor/new` 只向 stdout 输出 JSON，日志走 stderr
@@ -252,6 +254,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 
 - **窗口拖到哪就是哪**：整块画面都能当标题栏拖（1.x 没有可点的控件），松手后位置记在 `.lvglui/build/preview-window.txt`，下次 `preview` 原位打开。
 - **想一直看着画面**：`preview --topmost` 让窗口始终在其它窗口之上，写代码时不用来回切。开着窗口也能用 `Ctrl+Alt+T` 随时置顶/取消，标题栏会显示 `[topmost]`；这个开关也会和位置一起记住。
+- **滚轮**：鼠标滚轮会滚动指针下最深的可滚动容器（Shift 滚轮走水平方向），走的是 LVGL 自己的 `lv_obj_scroll_by`，不是模拟。截图永远只包含可视区——LVGL 只画屏幕内的部分；要看滚动后的画面，用 `render --scroll` 把偏移量固定下来再截，`meta.json` 会记录解析到的控件与偏移。
 - **多页切换**：实现了 `ui_page_*` 的工程，`preview` 标题会显示 `page 2/3 settings`，按 `PgUp`/`PgDn` 或 `←`/`→` 循环切页，`1`–`9` 直接跳到第 N 页；`preview --page settings` 直接以某一页启动。不带 `--page` 时按模板契约把入口屏当作第 1 页（`ui_start()` 就是 `ui_page_show(0, parent)`），所以第一次按 `→` 直接去第 2 页。每页第一次访问时构建，之后复用缓存的屏幕；旧页不销毁——页面里用 `lv_timer`/`lv_anim` 更新控件时，删屏会让回调访问已释放对象。缓存上限是页数，不随按键次数增长。保存重新编译后停在当前页；当前页被删掉时退回入口页。这只是查看器导航，不做输入注入。
 - **保存到刷新约 1 秒**：第一次启动会把 `vcvars64.bat` 的环境缓存成 `.lvglui/build/build-fast.cmd`，之后每次保存只跑 `cmake --build --target ui`，省掉 1.3 秒的 vcvars 和 0.3 秒的 configure。文件轮询 50ms、防抖 100ms。
 - 构建失败时窗口保留旧画面，标题变成 `reload failed (see build.log)`，不会每 100ms 重试刷屏。

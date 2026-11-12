@@ -83,6 +83,20 @@ function lastResultLine(stdout) {
   return { width, height, repaints, line: hit, lines };
 }
 
+// Parse the `scroll <target|-> <x> <y>` line shot.exe prints after --scroll.
+function scrollInfo(stdout) {
+  const line = String(stdout ?? '')
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .find((value) => /^scroll\s/.test(value));
+  if (!line) return null;
+  const [, target, xText, yText] = line.split(/\s+/);
+  const x = Number(xText);
+  const y = Number(yText);
+  if (!Number.isInteger(x) || !Number.isInteger(y)) return null;
+  return { target: target === '-' ? null : target, x, y };
+}
+
 // Ask shot.exe for the page list (one name per line, render order). The names
 // are runtime C strings, so this cannot come from a static scan.
 function listPages(shotPath, buildDir) {
@@ -232,6 +246,7 @@ export function renderProject(ctx, options = {}) {
     names: [],
     pages: [],
     page: null,
+    scroll: null,
     buildMs: 0,
     shotMs: 0,
     encodeMs: 0,
@@ -257,6 +272,22 @@ export function renderProject(ctx, options = {}) {
     fs.mkdirSync(outDir, { recursive: true });
   } catch (e) {
     return fail('output', `cannot create output directory ${outDir}: ${e.message}`);
+  }
+
+  // --scroll is a usage-level contract: reject bad combinations before any
+  // build or shot.exe run, so a typo cannot cost a compile.
+  const scrollSpec = opts.scroll === undefined || opts.scroll === null
+    ? null
+    : String(opts.scroll);
+  if (scrollSpec !== null && scrollSpec === '') {
+    return fail('scroll', '--scroll needs a value: <y>, <name>=<y> or <name>=bottom');
+  }
+  if (scrollSpec !== null && opts.allPages === true) {
+    return fail(
+      'scroll',
+      '--scroll cannot be combined with --all-pages: pages scroll independently; '
+        + 'render one page at a time, or pass the target name explicitly.',
+    );
   }
 
   const shotPath = path.join(ctx.buildDir, 'shot.exe');
@@ -574,6 +605,7 @@ export function renderProject(ctx, options = {}) {
   const shotStarted = Date.now();
   const shotArgs = ['--raw', rawPath, '--frames', String(frameCount), '--tree', treePath];
   if (pageIndex !== null) shotArgs.push('--page', String(pageIndex));
+  if (scrollSpec !== null) shotArgs.push('--scroll', scrollSpec);
   const shot = spawnSync(
     shotPath,
     shotArgs,
@@ -584,6 +616,15 @@ export function renderProject(ctx, options = {}) {
   const shotOutput = `${shot.stdout ?? ''}\n${shot.stderr ?? ''}`;
   if (shot.error || shot.status !== 0) {
     const reason = shot.error ? shot.error.message : `exit ${shot.status}`;
+    // shot.exe exits 2 when --scroll could not resolve its target; that is a
+    // usage error, not a render failure, so keep the stage distinct.
+    if (shot.status === 2 && scrollSpec !== null && /scroll failed/i.test(shotOutput)) {
+      return fail(
+        'scroll',
+        `--scroll ${JSON.stringify(scrollSpec)} failed:\n${tail(shotOutput)}`,
+        mergeWarnings(result.diagnostics, warnings),
+      );
+    }
     return fail(
       'shot',
       `shot.exe failed (${reason}):\n${tail(shotOutput)}`,
@@ -681,6 +722,12 @@ export function renderProject(ctx, options = {}) {
     return fail('meta', `cannot hash PNG: ${e.message}`, diagnostics);
   }
 
+  // The PNG is always the visible viewport; `scroll` records which offset it
+  // was sampled at, so two runs are comparable without guessing.
+  const scroll = scrollSpec === null
+    ? null
+    : { spec: scrollSpec, ...(scrollInfo(shot.stdout) ?? { resolved: false }) };
+
   const meta = {
     version: 1,
     project: ctx.root,
@@ -691,6 +738,7 @@ export function renderProject(ctx, options = {}) {
     idf: ctx.idf?.version ?? null,
     frames: frameCount,
     ...(pageIndex !== null ? { page: pageNames[pageIndex] } : {}),
+    ...(scroll ? { scroll } : {}),
     repaints,
     buildMs: result.buildMs,
     shotMs: result.shotMs,
@@ -731,5 +779,6 @@ export function renderProject(ctx, options = {}) {
     diagnostics,
     names,
     page: pageIndex !== null ? pageNames[pageIndex] : null,
+    scroll,
   };
 }

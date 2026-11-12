@@ -9,3 +9,5 @@ EXPORTS
     ui_set_page
     ui_page_index
     ui_goto_page
+    ui_scroll
+    ui_wheel

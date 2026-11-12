@@ -17,6 +17,7 @@ All notable changes to lvglui are documented here.
 - `preview` 支持多页查看：标题显示当前页 `page 2/3 settings`，`PgUp`/`PgDn`、`←`/`→` 循环切页，`1`–`9` 直跳，`--page <name>` 指定启动页；切页重建屏幕树并销毁旧页，热重载停在同一页。新增导出 `ui_page_index`/`ui_goto_page`（`ui.dll` 不实现多页契约时窗口行为不变）。这是查看器导航，不含输入注入。
 - `preview` 切页改为按页缓存并复用屏幕，不再销毁旧屏：页面里创建的 `lv_timer` 不随屏幕销毁，删屏后回调会访问已释放的控件，表现为切几次页窗口直接消失。无 `--page` 启动时把模板入口（第 0 页）视为第 1 页，第一次按 `→` 不再原地重建首页。
 - 构建失败时能报出链接错误：新增对 `xxx.obj : error LNK2019: …` 这类无行号的 MSVC 链接错误和 GCC `undefined reference to …` 的解析，按 `file|line|code|message` 去重，并给出 `snprintf/strdup` 在 MSVC C 模式缺失、缺符号实现的提示；`render`/`build` 读 `build.log` 改用 UTF-8→GBK 回退解码，cmd 输出的 `\r` 不再让行尾规则失效。
+- `render --scroll` 与预览滚轮：`render` 可先滚动再截图（`<y>`、`<name>=<y>`、`<name>=top|bottom`，偏移写进 `meta.json.scroll`，不能和 `--all-pages` 同用）；`preview` 支持滚轮滚动指针下最深的可滚容器（Shift 水平）。两者都调用 LVGL 自己的 `lv_obj_scroll_to_*`，截图仍只包含可视区，和固件同一套裁剪。
 - 渲染主题不再由 host 硬编码：去掉 `lv_theme_simple_init()`，改由 `lv_display_create()` 按 `LV_USE_THEME_DEFAULT / SIMPLE / MONO` 自动选择，和固件走同一条路径；工程自己在 UI 入口调用 `lv_display_set_theme()` 也照样生效。此前含默认样式控件（按钮、滑杆、开关等）的界面在预览和固件上会不一致（实测一个未加样式的 `lv_button` 相差 5% 像素）；已自己固定 simple 主题的工程（如 my_lcd）基线不变。README 补了"像素一致的前提"。
 
 ## [1.0.0-rc.1] - 2026-11-09

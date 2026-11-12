@@ -54,3 +54,51 @@ test('build failure exposes diagnostics and the build log', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+function scrollCtx() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lvglui-scroll-'));
+  return {
+    ctx: {
+      ok: true,
+      toolDir: TOOL_DIR,
+      root,
+      buildDir: path.join(root, 'build'),
+      outDir: path.join(root, 'out'),
+      lvConfPath: path.join(root, 'build', 'lv_conf.h'),
+      uiDir: path.join(root, 'ui'),
+      entry: 'ui_start',
+      sources: [],
+      lvgl: { dir: path.join(root, 'lvgl'), version: '9.6.0' },
+      idf: null,
+      display: { width: 240, height: 320, colorDepth: 16 },
+      config: {},
+      sdkconfig: null,
+      // No toolchain: any attempt to build before validating --scroll would
+      // fail with stage "toolchain" and expose the ordering mistake.
+    },
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+test('--scroll without a value fails before building', () => {
+  const { ctx, cleanup } = scrollCtx();
+  try {
+    const r = renderProject(ctx, { scroll: '' });
+    assert.equal(r.ok, false);
+    assert.equal(r.error?.stage, 'scroll');
+    assert.match(r.error.message, /needs a value/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('--scroll cannot be combined with --all-pages', () => {
+  const { ctx, cleanup } = scrollCtx();
+  try {
+    const r = renderProject(ctx, { scroll: '120', allPages: true });
+    assert.equal(r.ok, false);
+    assert.equal(r.error?.stage, 'scroll');
+    assert.match(r.error.message, /cannot be combined/);
+  } finally {
+    cleanup();
+  }
+});

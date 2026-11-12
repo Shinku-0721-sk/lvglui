@@ -161,6 +161,7 @@ it only builds inside that object and must not call `lv_screen_load`.
 ```bash
 lvglui render --all-pages          # shot-<name>.png + tree-<name>.json per page, plus a shot-sheet.png overview
 lvglui render --page settings      # render only this page, still writing shot.png / tree.json
+lvglui render --scroll 120         # scroll the content to 120px first, then capture the visible viewport
 ```
 
 - the contact sheet follows the `pages` order in `meta.json`: two columns for ≤4 pages,
@@ -290,6 +291,10 @@ Common options:
 - `--no-build`: reuse an existing `shot.exe` (it is built automatically when missing)
 - `--page <name|n>`: for `render`, render only that page; for `preview`, use it as the start page
   (page name, or a 1-based page number; requires the `ui_page_*` contract)
+- `--scroll <spec>`: `render` scrolls before capturing and records the offset in `meta.json.scroll`;
+  `120` scrolls the first vertically scrollable object on the current screen, `name=120` names the
+  object, `name=bottom` / `name=top` jump to an end (the object needs `lv_obj_set_name`); cannot be
+  combined with `--all-pages`
 - `--all-pages`: render every page and an additional `shot-sheet.png` overview
 - `--topmost`: keep the `preview` window on top (while it is open, `Ctrl+Alt+T` toggles this too)
 - `--json`: `render/build/doctor/new` write JSON only to stdout, logs go to stderr
@@ -315,6 +320,11 @@ Exit codes: `0` success, `1` build/render failure, `2` usage/config error, `3` r
 - **Keep it in sight**: `preview --topmost` keeps the window above everything else, so you do
   not have to switch windows while editing. `Ctrl+Alt+T` toggles it at any time and the title
   bar shows `[topmost]`; the toggle is remembered along with the position.
+- **Wheel**: the mouse wheel scrolls the deepest scrollable container under the pointer
+  (`Shift` scrolls horizontally) through LVGL's own `lv_obj_scroll_by` — this is not a simulation.
+  A capture only ever contains the visible viewport, because LVGL draws only what is on screen;
+  to capture a scrolled view, pin the offset with `render --scroll` and `meta.json` records the
+  resolved object and offset.
 - **Multi-page switching**: for projects implementing `ui_page_*`, the `preview` title shows
   `page 2/3 settings`; `PgUp`/`PgDn` or `←`/`→` cycle through pages, `1`–`9` jump straight to
   page N, and `preview --page settings` starts on a given page. Without `--page`, the template
