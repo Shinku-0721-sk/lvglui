@@ -7,7 +7,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 import { buildHost } from './build.mjs';
 import { findToolchain } from './toolchain.mjs';
@@ -245,7 +245,62 @@ export function previewProject(ctx, options = {}) {
   if (typeof child.pid !== 'number') {
     return failure('spawn', `cannot start ${exe}`, args);
   }
+  try {
+    fs.writeFileSync(previewPidPath(ctx), JSON.stringify({
+      pid: child.pid,
+      startedAt: new Date().toISOString(),
+      args,
+    }));
+  } catch {
+    // The pid file only powers preview stop; failing to write it must not
+    // prevent the window from opening.
+  }
   child.unref();
 
   return { ok: true, pid: child.pid, args, error: null };
+}
+
+export function previewPidPath(ctx) {
+  return path.join(path.resolve(ctx.buildDir), 'preview.pid');
+}
+
+/**
+ * Stop the preview window this tool started, if any. The pid file is written
+ * by `previewProject`; taskkill /T also covers a build the window spawned.
+ *
+ * @returns {{ok: boolean, stopped: boolean, pid: number|null, message: string}}
+ */
+export function stopPreview(ctx) {
+  const file = previewPidPath(ctx);
+  let data = null;
+  try {
+    data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return { ok: true, stopped: false, pid: null, message: 'no preview pid file; the window was not started by lvglui' };
+  }
+  const pid = Number.isInteger(data?.pid) ? data.pid : null;
+  if (pid === null) {
+    try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
+    return { ok: true, stopped: false, pid: null, message: 'preview pid file is malformed' };
+  }
+  // A detached window that already exited leaves a stale pid; treat "not
+  // running" as a successful stop so the caller does not have to care.
+  try {
+    process.kill(pid, 0);
+  } catch {
+    try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
+    return { ok: true, stopped: false, pid, message: 'preview is not running' };
+  }
+  let status = null;
+  try {
+    const r = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, encoding: 'utf8' });
+    status = r.status;
+  } catch {
+    status = null;
+  }
+  try { fs.rmSync(file, { force: true }); } catch { /* ignore */ }
+  if (status !== 0) {
+    return { ok: false, stopped: false, pid, message: 'taskkill failed; close the window manually' };
+  }
+  return { ok: true, stopped: true, pid, message: 'preview stopped' };
 }

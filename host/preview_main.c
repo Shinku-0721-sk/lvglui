@@ -100,6 +100,14 @@ static char g_fp[32];                  /* last fingerprint we reacted to   */
 static char g_build_fp[32];            /* sources the running build sees   */
 static HANDLE g_build_proc;
 static int    g_building;
+
+/* Cross-process build lock, shared with the Node CLI/MCP tooling. A directory
+ * is the lock: CreateDirectoryW is atomic, and the owner file lets a waiting
+ * process say who is holding it. Preview and a terminal build used to write
+ * CMakeCache/Ninja state at the same time, which surfaces as a confusing
+ * "failed recompaction: Permission denied". */
+static wchar_t g_build_lock_dir[PATH_CAP];
+static int     g_build_lock_held;
 static int    g_change_pending;
 static DWORD  g_change_tick;
 static unsigned long long g_loaded_stamp;
@@ -861,6 +869,107 @@ static int load_ui(void)
     return 0;
 }
 
+/* ---- cross-process build lock ---------------------------------------- */
+static void build_lock_dir(wchar_t *out, size_t cap)
+{
+    swprintf(out, cap, L"%ls\\.build-lock", g_build_dir);
+}
+
+static int build_lock_owner_pid(void)
+{
+    wchar_t path[PATH_CAP];
+    char buf[256];
+    FILE *f;
+    char *p;
+    size_t n;
+
+    build_lock_dir(path, PATH_CAP);
+    if(wcslen(path) + 12 >= PATH_CAP) return 0;
+    wcsncat(path, L"\\owner.json", PATH_CAP - wcslen(path));
+    f = _wfopen(path, L"rb");
+    if(!f) return 0;
+    n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = 0;
+    p = strstr(buf, "\"pid\"");
+    if(!p) return 0;
+    p = strchr(p, ':');
+    if(!p) return 0;
+    return atoi(p + 1);
+}
+
+static unsigned long long build_lock_age_ms(void)
+{
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    FILETIME now;
+    ULARGE_INTEGER a, b;
+
+    if(!GetFileAttributesExW(g_build_lock_dir, GetFileExInfoStandard, &fad)) return 0;
+    GetSystemTimeAsFileTime(&now);
+    a.LowPart = fad.ftLastWriteTime.dwLowDateTime;
+    a.HighPart = fad.ftLastWriteTime.dwHighDateTime;
+    b.LowPart = now.dwLowDateTime;
+    b.HighPart = now.dwHighDateTime;
+    if(b.QuadPart <= a.QuadPart) return 0;
+    return (b.QuadPart - a.QuadPart) / 10000ULL;
+}
+
+static int process_is_alive(DWORD pid)
+{
+    HANDLE h;
+    DWORD code = 0;
+    int alive;
+    if(pid == 0) return 0;
+    h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if(!h) return 0;
+    alive = GetExitCodeProcess(h, &code) && code == STILL_ACTIVE;
+    CloseHandle(h);
+    return alive;
+}
+
+static void release_build_lock(void)
+{
+    wchar_t owner[PATH_CAP];
+    if(!g_build_lock_held) return;
+    build_lock_dir(g_build_lock_dir, PATH_CAP);
+    swprintf(owner, PATH_CAP, L"%ls\\owner.json", g_build_lock_dir);
+    DeleteFileW(owner);
+    RemoveDirectoryW(g_build_lock_dir);
+    g_build_lock_held = 0;
+}
+
+static int try_acquire_build_lock(void)
+{
+    wchar_t owner[PATH_CAP];
+    FILE *f;
+
+    if(g_build_lock_held) return 1;
+    build_lock_dir(g_build_lock_dir, PATH_CAP);
+    if(!CreateDirectoryW(g_build_lock_dir, NULL)) {
+        DWORD err = GetLastError();
+        int pid = build_lock_owner_pid();
+        if(err != ERROR_ALREADY_EXISTS) return 0;
+        if(pid != 0 && process_is_alive((DWORD)pid)) return 0;
+        /* No owner file yet means the creator may be between mkdir and the
+           owner write; give it a few seconds before treating it as stale. */
+        if(pid == 0 && build_lock_age_ms() < 10000ULL) return 0;
+        /* Owner died without releasing: reclaim the directory. */
+        swprintf(owner, PATH_CAP, L"%ls\\owner.json", g_build_lock_dir);
+        DeleteFileW(owner);
+        RemoveDirectoryW(g_build_lock_dir);
+        if(!CreateDirectoryW(g_build_lock_dir, NULL)) return 0;
+    }
+    swprintf(owner, PATH_CAP, L"%ls\\owner.json", g_build_lock_dir);
+    f = _wfopen(owner, L"wb");
+    if(f) {
+        fprintf(f, "{\"pid\":%lu,\"purpose\":\"preview\",\"startedAt\":\"%lu\"}\n",
+                (unsigned long)GetCurrentProcessId(), (unsigned long)GetTickCount());
+        fclose(f);
+    }
+    g_build_lock_held = 1;
+    return 1;
+}
+
 /* ---- asynchronous rebuild -------------------------------------------- */
 static int start_build(const char *fp)
 {
@@ -872,6 +981,7 @@ static int start_build(const char *fp)
     if(g_building) return 0;
 
     CreateDirectoryW(g_build_dir, NULL);
+    if(!try_acquire_build_lock()) return 0;
     fast = (g_env_ready || ensure_vsenv() == 0) && g_fast_cmd_path[0] != 0;
     if(fast) {
         fast = swprintf(cmd, PATH_CAP * 2 + 64,
@@ -895,6 +1005,7 @@ static int start_build(const char *fp)
     if(!CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW,
                        NULL, g_build_dir, &si, &pi)) {
         printf("[host] cannot start build (err %lu)\n", GetLastError());
+        release_build_lock();
         set_title(L"build failed (see build.log)");
         return -1;
     }
@@ -917,12 +1028,14 @@ static void finish_build(void)
 
     if(!g_build_proc) {
         g_building = 0;
+        release_build_lock();
         return;
     }
     GetExitCodeProcess(g_build_proc, &code);
     CloseHandle(g_build_proc);
     g_build_proc = NULL;
     g_building = 0;
+    release_build_lock();
     if(g_build_started) {
         printf("[host] build took %lu ms\n",
                (unsigned long)(GetTickCount() - g_build_started));
@@ -1312,6 +1425,7 @@ done:
         CloseHandle(g_build_proc);
         g_build_proc = NULL;
     }
+    release_build_lock();
     unload_ui();
     return 0;
 }

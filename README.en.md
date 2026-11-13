@@ -76,7 +76,7 @@ test/               node:test unit + integration tests
 Artifacts are written only to `<project>/.lvglui/build/` and `<project>/.lvglui/out/`:
 
 - `build/`: `lv_conf.h`, `lvglui.cmake`, `build.cmd`, `build.log`, `shot.exe`, `preview.exe`, `ui.dll`
-- `out/`: `shot.png`, `tree.json`, `meta.json`
+- `out/`: `shot.png`, `tree.json`, `meta.json`; with `--page`, also `shot-<page>.png` and `tree-<page>.json`
 
 ## lvglui.json
 
@@ -167,7 +167,7 @@ it only builds inside that object and must not call `lv_screen_load`.
 
 ```bash
 lvglui render --all-pages          # shot-<name>.png + tree-<name>.json per page, plus a shot-sheet.png overview
-lvglui render --page settings      # render only this page, still writing shot.png / tree.json
+lvglui render --page settings      # render only this page, plus shot-settings.png / tree-settings.json
 lvglui render --scroll 120         # scroll the content to 120px first, then capture the visible viewport
 ```
 
@@ -301,6 +301,7 @@ Common options:
 - `--page <name|n>`: for `render`, render only that page; for `preview`, use it as the start page
   (page name, or a 1-based page number; requires the `ui_page_*` contract)
 - `--scroll <spec>`: `render` scrolls before capturing and records the offset in `meta.json.scroll`;
+- `--stop`: close the preview window this tool started (preview only; MCP: `preview_ui { stop: true }`)
 - `--max-heap-pct <1-100>`: after `render`, check the LVGL heap percentage; above the limit sets
   `meta.budget.exceeded: true` (exit code stays 0, so the MCP client and skill can require
   optimisation before delivery); cannot be combined with `--all-pages`
@@ -337,6 +338,10 @@ Exit codes: `0` success, `1` build/render failure, `2` usage/config error, `3` r
   A capture only ever contains the visible viewport, because LVGL draws only what is on screen;
   to capture a scrolled view, pin the offset with `render --scroll` and `meta.json` records the
   resolved object and offset.
+- **Build conflicts**: the preview watcher, the CLI and MCP share one build lock
+  (`.lvglui/build/.build-lock`). A caller that cannot get it receives `BUILD_BUSY` with the
+  holder's pid and a hint; close the window with `preview --stop` and retry. Do not kill
+  processes or delete `build/` — this was never a permission problem.
 - **Multi-page switching**: for projects implementing `ui_page_*`, the `preview` title shows
   `page 2/3 settings`; `PgUp`/`PgDn` or `←`/`→` cycle through pages, `1`–`9` jump straight to
   page N, and `preview --page settings` starts on a given page. Without `--page`, the template
@@ -461,6 +466,7 @@ tolerance when comparing across machines.
 | Compilation fails | Read `<project>/.lvglui/build/build.log` and the `diagnostics` from `render --json`; link errors (`LNK2019`/`LNK1120`, `undefined reference`) are parsed too |
 | Chinese text shows boxes | Run `lvglui font status` first; then `font add --preset noto-sans-sc` if needed, and regenerate after text changes |
 | `--no-build` still builds | Expected when `shot.exe` does not exist; run a full `render` first |
+| `BUILD_BUSY` / `failed recompaction` | Another build (usually the preview watcher) is writing the same build directory; run `preview --stop` and retry; do not delete the directory |
 
 ## Contributors
 

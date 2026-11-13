@@ -14,7 +14,7 @@ import { buildHost } from './build.mjs';
 import { writeLvConf, applyOverrides } from './kconfig.mjs';
 import { findToolchain } from './toolchain.mjs';
 import { parseDiagnostics } from './diagnostics.mjs';
-import { readTree, compactTree, collectNames } from './tree.mjs';
+import { readTree, compactTree, collectNames, clipWarnings } from './tree.mjs';
 import { writeIfChanged, sha256File, readText } from './fsutil.mjs';
 import { encodeRgb565Png } from './png.mjs';
 import { fontStatus, previewOverrides } from './font.mjs';
@@ -246,6 +246,24 @@ function errorLines(diagnostics, limit = 8) {
   return errors.length > 0 ? errors.join('; ') : null;
 }
 
+// CMake's generate step (and Ninja's own failures) produce no compiler-style
+// diagnostic, so the first useful line has to be lifted out of the log by
+// hand. Without it a build failure degrades to "exit 1" plus a 2000-line log.
+export function firstBuildError(log, diagnostics) {
+  const entry = diagnostics.errors?.[0];
+  if (entry) {
+    const where = entry.file ? `${entry.file}${entry.line ? `:${entry.line}` : ''}` : '';
+    const code = entry.code ? ` ${entry.code}` : '';
+    return `${where ? `${where}: ` : ''}${code}${entry.message}`.trim();
+  }
+  const line = String(log ?? '')
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .find((value) => /^(CMake Error|ninja: error|error\b)/i.test(value)
+      || /error [A-Z]+\d+/.test(value));
+  return line ?? null;
+}
+
 /**
  * @param {object} ctx shared project context from `loadContext`
  * @param {{frames?: number, rebuild?: boolean, outDir?: string}} [options]
@@ -388,6 +406,20 @@ export function renderProject(ctx, options = {}) {
 
     const build = buildHost(buildCtx);
     result.buildMs = build.durationMs;
+    if (!build.ok && build.busy) {
+      const merged = mergeWarnings(emptyDiagnostics(), warnings);
+      return fail(
+        'build',
+        String(build.stderr || '').trim() || 'another lvglui build is running',
+        merged,
+        {
+          code: 'BUILD_BUSY',
+          holder: build.busy.holder ?? null,
+          hint: 'close the preview window (or call preview_ui with stop) and retry; '
+            + 'nothing is wrong with the project or with file permissions',
+        },
+      );
+    }
     if (!build.ok) {
       let log = build.stderr;
       try {
@@ -404,11 +436,17 @@ export function renderProject(ctx, options = {}) {
       const buildLog = typeof build.logPath === 'string' && build.logPath !== ''
         ? build.logPath
         : tail(build.stderr);
+      const firstError = firstBuildError(log, merged);
       return fail(
         'build',
         `build failed (exit ${build.exitCode ?? '?'})${summary ? `: ${summary}` : ''}`,
         merged,
-        { diagnostics: merged, buildLog },
+        {
+          code: 'BUILD_FAILED',
+          diagnostics: merged,
+          buildLog,
+          firstError,
+        },
       );
     }
     builtBecauseMissing = !rebuild;
@@ -556,6 +594,9 @@ export function renderProject(ctx, options = {}) {
       const truncated = compact.truncated === true || rawTree.truncated === true;
       if (truncated) compact.truncated = true;
       const totalNodes = Number.isInteger(rawTree.nodes) ? rawTree.nodes : compact.nodes;
+      for (const warning of clipWarnings(compact)) {
+        warnings.push(`page ${JSON.stringify(name)}: ${warning}`);
+      }
 
       let sha256;
       try {
@@ -637,6 +678,7 @@ export function renderProject(ctx, options = {}) {
     result.diagnostics = diagnostics;
     result.pages = records.map(({ compact, rawTree, ...record }) => record);
     result.memory = allPagesMemory;
+    result.artifact = { png: sheetFile, bytes: sheetPng.length, sha256: sheetSha256 };
 
     const meta = {
       version: 1,
@@ -650,6 +692,7 @@ export function renderProject(ctx, options = {}) {
       allPages: true,
       ...(fontReport ? { font: fontReport } : {}),
       ...(allPagesMemory ? { memory: allPagesMemory } : {}),
+      artifact: { png: sheetFile, bytes: sheetPng.length, sha256: sheetSha256 },
       buildMs: result.buildMs,
       shotMs: result.shotMs,
       encodeMs: result.encodeMs,
@@ -795,6 +838,7 @@ export function renderProject(ctx, options = {}) {
   // truncated (depth/node caps), and that fact must survive into the result.
   const treeTruncated = compact.truncated === true || rawTree.truncated === true;
   if (treeTruncated) compact.truncated = true;
+  for (const warning of clipWarnings(compact)) warnings.push(warning);
   const names = collectNames(rawTree);
   const diagnostics = mergeWarnings(result.diagnostics, warnings);
   const totalNodes = Number.isInteger(rawTree.nodes) ? rawTree.nodes : compact.nodes;
@@ -811,6 +855,22 @@ export function renderProject(ctx, options = {}) {
   const scroll = scrollSpec === null
     ? null
     : { spec: scrollSpec, ...(scrollInfo(shot.stdout) ?? { resolved: false }) };
+
+  let artifact = null;
+  if (pageIndex !== null) {
+    const stem = pageFileStems(pageNames)[pageIndex];
+    const namedPng = `shot-${stem}.png`;
+    const namedTree = `tree-${stem}.json`;
+    try {
+      const tmp = path.join(outDir, `${namedPng}.${process.pid}.tmp`);
+      fs.writeFileSync(tmp, png);
+      fs.renameSync(tmp, path.join(outDir, namedPng));
+      fs.copyFileSync(treePath, path.join(outDir, namedTree));
+    } catch (e) {
+      return fail('pages', `cannot write the page-named artifacts: ${e.message}`, diagnostics);
+    }
+    artifact = { png: namedPng, tree: namedTree, bytes: png.length, sha256 };
+  }
 
   const memory = memInfo(shot.stdout);
   const budget = budgetPct === null
@@ -835,6 +895,7 @@ export function renderProject(ctx, options = {}) {
     ...(memory ? { memory: { lvgl: memory } } : {}),
     ...(budget ? { budget } : {}),
     ...(fontReport ? { font: fontReport } : {}),
+    ...(artifact ? { artifact } : {}),
     repaints,
     buildMs: result.buildMs,
     shotMs: result.shotMs,
@@ -876,6 +937,7 @@ export function renderProject(ctx, options = {}) {
     names,
     page: pageIndex !== null ? pageNames[pageIndex] : null,
     scroll,
+    artifact,
     memory: memory ? { lvgl: memory } : null,
     budget,
     font: fontReport,

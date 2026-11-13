@@ -13,7 +13,7 @@ import { buildHost, writeBuildScript } from '../core/build.mjs';
 import { loadContext } from '../core/context.mjs';
 import { doctor as runDoctor } from '../core/doctor.mjs';
 import { initProject } from '../core/init.mjs';
-import { previewProject } from '../core/preview.mjs';
+import { previewProject, stopPreview } from '../core/preview.mjs';
 import { renderProject } from '../core/render.mjs';
 import { fontAddWithChanges, fontOff, fontStatus } from '../core/font.mjs';
 import { findToolchain } from '../core/toolchain.mjs';
@@ -148,6 +148,8 @@ const TOOLS = [
         width: WIDTH_ARG,
         height: HEIGHT_ARG,
         topmost: { type: 'boolean', description: '让窗口保持在其它窗口之上（Ctrl+Alt+T 也可以随时切换）' },
+        page: { type: 'string', description: '启动页：页名或从 1 开始的页号（需要 ui_page_* 契约）' },
+        stop: { type: 'boolean', description: '关闭本工具启动的预览窗口，不再打开新窗口' },
       },
       additionalProperties: false,
     },
@@ -248,7 +250,11 @@ async function callTool(name, args = {}) {
         {
           ok: false,
           stage: r.error?.stage ?? r.stage,
+          code: r.error?.code ?? null,
           message: r.error?.message ?? r.message,
+          firstError: r.error?.firstError ?? null,
+          hint: r.error?.hint ?? null,
+          holder: r.error?.holder ?? null,
           diagnostics: r.diagnostics,
           buildLog: r.error?.buildLog ?? r.buildLog ?? null,
           problems: ctx.problems,
@@ -297,7 +303,26 @@ async function callTool(name, args = {}) {
       return errorResult(`无法生成构建脚本: ${e.message}`);
     }
     const r = buildHost(buildCtx, { quiet: true });
-    return toolResult({ ok: r.ok, exitCode: r.exitCode, durationMs: r.durationMs, logPath: r.logPath, script, errors: r.stderr ? [r.stderr.trim()].filter(Boolean) : [] }, !r.ok);
+    const payload = {
+      ok: r.ok,
+      exitCode: r.exitCode,
+      durationMs: r.durationMs,
+      logPath: r.logPath,
+      script,
+      errors: r.stderr ? [r.stderr.trim()].filter(Boolean) : [],
+    };
+    if (!r.ok) {
+      payload.error = r.busy
+        ? {
+            stage: 'build',
+            code: 'BUILD_BUSY',
+            message: `another lvglui build is running: ${r.stderr}`,
+            holder: r.busy.holder ?? null,
+            hint: 'close the preview window (or call preview_ui with stop) and retry',
+          }
+        : { stage: 'build', code: 'BUILD_FAILED', message: 'build failed', logPath: r.logPath };
+    }
+    return toolResult(payload, !r.ok);
   }
 
   if (name === 'doctor') {
@@ -339,7 +364,14 @@ async function callTool(name, args = {}) {
   if (name === 'preview_ui') {
     const ctx = load(project, true, args);
     if (!ctx.ok) return errorResult('工程探测失败', { problems: ctx.problems });
-    const p = previewProject(ctx, { topmost: args.topmost === true });
+    if (args.stop === true) {
+      const r = stopPreview(ctx);
+      return toolResult(r, !r.ok);
+    }
+    if (typeof args.page === 'string' && ctx.pages?.supported !== true) {
+      return errorResult('界面没有实现 ui_page_* 契约，不能按页预览');
+    }
+    const p = previewProject(ctx, { topmost: args.topmost === true, page: args.page });
     return toolResult(p, !p.ok);
   }
 

@@ -6,7 +6,10 @@
 
 import fs from 'node:fs';
 
-const KEPT_FIELDS = ['name', 'cls', 'x', 'y', 'w', 'h', 'absX', 'absY', 'hidden', 'text', 'value', 'checked'];
+const KEPT_FIELDS = [
+  'name', 'cls', 'x', 'y', 'w', 'h', 'absX', 'absY',
+  'selfW', 'selfH', 'overflow', 'scrollable', 'hidden', 'text', 'value', 'checked',
+];
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -93,4 +96,56 @@ export function collectNames(tree) {
   walk(source);
 
   return [...names].sort();
+}
+/**
+ * Advisory clipping check for a compact tree: a widget whose intrinsic size
+ * is larger than its own box, or a child that falls outside a parent that
+ * neither scrolls nor shows overflow, is being cut. This is geometry, not a
+ * pixel measurement, so it is deterministic and cheap; it intentionally
+ * ignores scrollable/overflow parents where children are expected to extend.
+ *
+ * @returns {string[]} human-readable warnings (bounded)
+ */
+export function clipWarnings(compact, { tolerance = 1, limit = 20 } = {}) {
+  const root = isObject(compact?.root) ? compact.root : compact;
+  if (!isObject(root)) return [];
+  const out = [];
+  const push = (node, message) => {
+    if (out.length >= limit) return;
+    const label = node.name ? `${node.cls} "${node.name}"` : node.cls || 'widget';
+    out.push(`[clip] ${label}: ${message}`);
+  };
+  const walk = (node, parent) => {
+    if (!isObject(node)) return;
+    const w = Number(node.w);
+    const h = Number(node.h);
+    const selfW = Number(node.selfW);
+    const selfH = Number(node.selfH);
+    if (Number.isFinite(selfW) && Number.isFinite(w) && selfW > w + tolerance) {
+      push(node, `content is ${selfW}px wide but the box is ${w}px; it will be clipped`);
+    }
+    if (Number.isFinite(selfH) && Number.isFinite(h) && selfH > h + tolerance) {
+      push(node, `content is ${selfH}px tall but the box is ${h}px; it will be clipped`);
+    }
+    if (isObject(parent) && parent.scrollable !== true && parent.overflow !== true
+        && Number.isFinite(parent.absX) && Number.isFinite(parent.absY)
+        && Number.isFinite(parent.w) && Number.isFinite(parent.h)
+        && Number.isFinite(node.absX) && Number.isFinite(node.absY)
+        && Number.isFinite(node.w) && Number.isFinite(node.h)) {
+      const left = parent.absX;
+      const top = parent.absY;
+      const right = parent.absX + parent.w;
+      const bottom = parent.absY + parent.h;
+      if (node.absX < left - tolerance || node.absY < top - tolerance
+          || node.absX + node.w > right + tolerance
+          || node.absY + node.h > bottom + tolerance) {
+        push(node, `lies outside its parent (parent ${parent.w}x${parent.h} at ${parent.absX},${parent.absY}); the parent does not scroll or show overflow`);
+      }
+    }
+    const children = Array.isArray(node.children) ? node.children : [];
+    for (const child of children) walk(child, node);
+  };
+  walk(root, null);
+  if (out.length >= limit) out.push(`[clip] ... more clipped widgets were not listed (limit ${limit})`);
+  return out;
 }

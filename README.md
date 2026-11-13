@@ -66,7 +66,7 @@ test/                node:test 单测 + 集成测试
 产物只写 `<project>/.lvglui/build/` 和 `<project>/.lvglui/out/`：
 
 - `build/`：`lv_conf.h`、`lvglui.cmake`、`build.cmd`、`build.log`、`shot.exe`、`preview.exe`、`ui.dll`
-- `out/`：`shot.png`、`tree.json`、`meta.json`
+- `out/`：`shot.png`、`tree.json`、`meta.json`；指定 `--page` 时另写 `shot-<page>.png`、`tree-<page>.json`
 
 ## lvglui.json
 
@@ -119,7 +119,7 @@ void  ui_port_set_relay(bool on);
 > 扫 main 时还没有人引用 `ui_port_*`，那个 .obj 不会被拉进来，后面 app_ui 需要时就报
 > `undefined reference to 'ui_port_get_temperature'`。放进独立组件 `ui_port`（app_ui 依赖它）才对。
 
-控件命名用 `lv_obj_set_name(obj, "val_temp")`（预览 `lv_conf.h` 强制开启 `LV_USE_OBJ_NAME`；固件侧也要开），渲染时 `tree.json` 和 PNG 一起给你。`tree.json` 里的 `x`/`y` 相对父容器，`absX`/`absY` 是相对屏幕的绝对坐标。
+控件命名用 `lv_obj_set_name(obj, "val_temp")`（预览 `lv_conf.h` 强制开启 `LV_USE_OBJ_NAME`；固件侧也要开），渲染时 `tree.json` 和 PNG 一起给你。`tree.json` 里的 `x`/`y` 相对父容器，`absX`/`absY` 是相对屏幕的绝对坐标。若控件内容超出自身盒子、或子控件落在不滚动/不 overflow 的父容器之外，`render` 会在 `diagnostics.warnings` 里给出 `[clip] ...`，先看它再调布局。
 
 **AI 的编辑边界**：`ui_port.h` 只允许追加声明（不改已有签名/类型），`ui_port_stub.c` 只允许改 `#ifdef LVGLUI_HOST` 内的预览桩，`ui_port_impl.c` 只读。AI 需要新 getter 时应报告“固件需在 `ui_port_impl.c` 补哪一行”，而不是替用户实现业务；`doctor` 会检查头文件声明与实现是否漂移，缺实现时明确提示固件会链接失败。
 
@@ -138,7 +138,7 @@ lv_obj_t   *ui_page_show(int index, lv_obj_t *parent);
 
 ```bash
 lvglui render --all-pages          # 每页 shot-<name>.png + tree-<name>.json，另出 shot-sheet.png 总览
-lvglui render --page settings      # 只渲染这一页，仍写 shot.png / tree.json
+lvglui render --page settings      # 只渲染这一页，并额外写 shot-settings.png / tree-settings.json
 lvglui render --scroll 120         # 先把内容滚到 120px 再截图（可视区与固件同一套裁剪）
 ```
 
@@ -237,6 +237,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 - `--page <name|n>`：`render` 只渲染某一页；`preview` 用它作为启动页（页名，或从 1 开始的页号；需要 `ui_page_*` 契约）
 - `--scroll <spec>`：`render` 先滚动再截图，写入 `meta.json.scroll`；`120` 滚当前屏第一个可竖滚对象，`name=120` 指定控件，`name=bottom`/`name=top` 跳到端点（需要控件设置 `lv_obj_set_name`）；不能和 `--all-pages` 同用
 - `--max-heap-pct <1-100>`：`render` 后检查 LVGL 堆使用率，超过上限时 `meta.budget.exceeded` 为 `true`（退出码仍 0，供 MCP/skill 判定“先优化再交付”）；不能和 `--all-pages` 同用
+- `--stop`：关闭本工具启动的预览窗口（只用于 `preview`；MCP 用 `preview_ui { stop: true }`）
 - `--all-pages`：渲染所有页，另出 `shot-sheet.png` 总览
 - `--topmost`：`preview` 窗口置顶（开着窗口时也可随时按 `Ctrl+Alt+T` 切换）
 - `--json`：`render/build/doctor/new` 只向 stdout 输出 JSON，日志走 stderr
@@ -258,6 +259,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 - **窗口拖到哪就是哪**：整块画面都能当标题栏拖（1.x 没有可点的控件），松手后位置记在 `.lvglui/build/preview-window.txt`，下次 `preview` 原位打开。
 - **想一直看着画面**：`preview --topmost` 让窗口始终在其它窗口之上，写代码时不用来回切。开着窗口也能用 `Ctrl+Alt+T` 随时置顶/取消，标题栏会显示 `[topmost]`；这个开关也会和位置一起记住。
 - **滚轮**：鼠标滚轮会滚动指针下最深的可滚动容器（Shift 滚轮走水平方向），走的是 LVGL 自己的 `lv_obj_scroll_by`，不是模拟。截图永远只包含可视区——LVGL 只画屏幕内的部分；要看滚动后的画面，用 `render --scroll` 把偏移量固定下来再截，`meta.json` 会记录解析到的控件与偏移。
+- **构建冲突**：预览 watcher、CLI、MCP 共用同一把构建锁（`.lvglui/build/.build-lock`）。拿不到锁会返回 `BUILD_BUSY`（带持有者 pid 和建议），用 `preview --stop` 关掉窗口再重试；不要杀进程或删 `build/`，那不是权限问题。
 - **多页切换**：实现了 `ui_page_*` 的工程，`preview` 标题会显示 `page 2/3 settings`，按 `PgUp`/`PgDn` 或 `←`/`→` 循环切页，`1`–`9` 直接跳到第 N 页；`preview --page settings` 直接以某一页启动。不带 `--page` 时按模板契约把入口屏当作第 1 页（`ui_start()` 就是 `ui_page_show(0, parent)`），所以第一次按 `→` 直接去第 2 页。每页第一次访问时构建，之后复用缓存的屏幕；旧页不销毁——页面里用 `lv_timer`/`lv_anim` 更新控件时，删屏会让回调访问已释放对象。缓存上限是页数，不随按键次数增长。保存重新编译后停在当前页；当前页被删掉时退回入口页。这只是查看器导航，不做输入注入。
 - **保存到刷新约 1 秒**：第一次启动会把 `vcvars64.bat` 的环境缓存成 `.lvglui/build/build-fast.cmd`，之后每次保存只跑 `cmake --build --target ui`，省掉 1.3 秒的 vcvars 和 0.3 秒的 configure。文件轮询 50ms、防抖 100ms。
 - 构建失败时窗口保留旧画面，标题变成 `reload failed (see build.log)`，不会每 100ms 重试刷屏。
@@ -338,6 +340,7 @@ skill 的约束是文字约定：只改 `uiDir`（含同级的 `ui_port` 组件�
 | 编译失败 | 看 `<project>/.lvglui/build/build.log` 和 `render --json` 的 `diagnostics`；链接错误（`LNK2019`/`LNK1120`、`undefined reference`）同样会被解析出来 |
 | 中文显示方块 | 先 `lvglui font status`；需要时 `font add --preset noto-sans-sc`，改文案后重新生成 |
 | `--no-build` 仍构建 | `shot.exe` 不存在时这是预期行为；先跑一次完整 `render` |
+| `BUILD_BUSY` / `failed recompaction` | 另一个构建（通常是预览 watcher）正在写同一个 build 目录；先 `preview --stop` 再重试，不要删目录 |
 
 ## 贡献者
 

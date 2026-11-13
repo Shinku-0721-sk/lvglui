@@ -10,11 +10,11 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { loadContext } from '../core/context.mjs';
-import { renderProject } from '../core/render.mjs';
+import { renderProject, firstBuildError } from '../core/render.mjs';
 import { findToolchain } from '../core/toolchain.mjs';
 import { doctor } from '../core/doctor.mjs';
 import { buildHost, writeBuildScript } from '../core/build.mjs';
-import { previewProject } from '../core/preview.mjs';
+import { previewProject, stopPreview } from '../core/preview.mjs';
 import { initProject } from '../core/init.mjs';
 import { newPage } from '../core/newpage.mjs';
 import { discoverProject } from '../core/discover.mjs';
@@ -65,6 +65,7 @@ const KNOWN_FLAGS = new Set([
   'noBuild',
   'noRender',
   'topmost',
+  'stop',
   'preset',
   'size',
   'chars',
@@ -112,6 +113,7 @@ const USAGE = `lvglui —— LVGL UI 无头渲染 / 预览工具
   --out <dir>       渲染输出目录（默认 <project>/.lvglui/out）
   --no-build        渲染时跳过编译，直接复用已有 shot.exe
   --topmost        实时预览窗口置顶（Ctrl+Alt+T 也可以随时切换）
+  --stop           关闭本工具启动的预览窗口（只用于 preview）
   --page <name>     render 只渲染某一页；preview 用它作为启动页（需要 ui_page_* 契约）
   --scroll <spec>   render 先滚动再截图：<y>、<name>=<y>、<name>=bottom（不能和 --all-pages 同用）
   --max-heap-pct <1-100>  render 后检查 LVGL 堆使用率，超过则 meta.budget.exceeded=true
@@ -391,6 +393,9 @@ export function validationProblem(command, flags, positionals) {
   if (flags.scroll !== undefined && (typeof flags.scroll !== 'string' || flags.scroll === '')) {
     return '--scroll 需要一个值: <y>、<name>=<y> 或 <name>=bottom';
   }
+  if (flags.stop !== undefined && command !== 'preview') {
+    return '--stop 只用于 preview';
+  }
   if (flags.maxHeapPct !== undefined && command !== 'render') {
     return '--max-heap-pct 只用于 render';
   }
@@ -473,6 +478,7 @@ async function runBuild(flags) {
 
   const build = buildHost(buildCtx);
   let diagnostics = null;
+  let logText = build.stderr;
   if (!build.ok) {
     let log = build.stderr;
     try {
@@ -483,8 +489,24 @@ async function runBuild(flags) {
     } catch {
       // keep captured stderr
     }
+    logText = log;
     diagnostics = parseDiagnostics(log ?? '', { root: ctx.root, toolDir: ctx.toolDir });
   }
+
+  const failure = build.busy
+    ? {
+        stage: 'build',
+        code: 'BUILD_BUSY',
+        message: `another lvglui build is running (${build.stderr})`,
+        holder: build.busy.holder ?? null,
+        hint: 'close the preview window (or call preview_ui with stop) and retry',
+      }
+    : (!build.ok ? {
+        stage: 'build',
+        code: 'BUILD_FAILED',
+        message: 'build failed',
+        firstError: firstBuildError(logText, diagnostics ?? { errors: [] }),
+      } : null);
 
   const value = {
     ok: build.ok,
@@ -492,6 +514,7 @@ async function runBuild(flags) {
     durationMs: build.durationMs,
     logPath: build.logPath,
     ...(diagnostics ? { diagnostics } : {}),
+    ...(failure ? { error: failure } : {}),
   };
 
   if (flags.json) {
@@ -501,6 +524,12 @@ async function runBuild(flags) {
     console.log(`[lvglui] build ok exit=0 log=${build.logPath} (${build.durationMs} ms)`);
   } else {
     console.error(`[lvglui] build failed exit=${build.exitCode ?? '?'} log=${build.logPath ?? '(none)'}`);
+    if (failure?.code === 'BUILD_BUSY') {
+      console.error(`[lvglui] ${failure.message}`);
+      console.error(`[lvglui] hint: ${failure.hint}`);
+    } else if (failure?.firstError) {
+      console.error(`[lvglui] ${failure.firstError}`);
+    }
     printDiagnostics(diagnostics);
   }
 
@@ -622,6 +651,13 @@ async function runNew(flags, positionals) {
 async function runPreview(flags) {
   const ctx = loadFor('preview', flags);
   if (!ctx.ok) return reportContextFailure(ctx, false);
+
+  if (flags.stop === true) {
+    const r = stopPreview(ctx);
+    if (flags.json) writeJson(r);
+    else console.log(`[lvglui] ${r.message}${r.pid ? ` (pid ${r.pid})` : ''}`);
+    return r.ok ? 0 : 1;
+  }
 
   if (flags.page !== undefined && ctx.pages?.supported !== true) {
     const message = '界面没有实现 ui_page_* 契约（ui_page_count / ui_page_name / ui_page_show），不能按页预览';

@@ -5,6 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { writeIfChanged } from './fsutil.mjs';
+import { acquireBuildLock, describeHolder } from './buildlock.mjs';
 
 const MAX_BUFFER = 32 * 1024 * 1024;
 
@@ -275,6 +276,28 @@ export function buildHost(ctx, options = {}) {
   const opts = isPlainObject(options) ? options : {};
   const injectedRun = typeof opts.run === 'function' ? opts.run : null;
 
+  // Serialize with any other lvglui process (a second CLI/MCP call, or the
+  // preview window's watcher) before touching CMake/Ninja state.
+  const lockRoot = typeof ctx?.buildDir === 'string' && ctx.buildDir !== '' ? ctx.buildDir : null;
+  const lock = lockRoot
+    ? acquireBuildLock(lockRoot, {
+        timeoutMs: Number.isFinite(opts.lockTimeoutMs) ? opts.lockTimeoutMs : 10_000,
+        purpose: 'build',
+      })
+    : { ok: true, release() {} };
+  if (!lock.ok) {
+    return {
+      ok: false,
+      exitCode: null,
+      durationMs: elapsed(),
+      stdout: '',
+      stderr: `another lvglui build is running: ${describeHolder(lock.holder)}`,
+      logPath: null,
+      busy: { holder: lock.holder, dir: lock.dir },
+    };
+  }
+
+  try {
   let script;
   try {
     ({ script } = writeBuildScript(ctx));
@@ -347,4 +370,7 @@ export function buildHost(ctx, options = {}) {
     stderr,
     logPath: writtenLogPath,
   };
+  } finally {
+    lock.release();
+  }
 }

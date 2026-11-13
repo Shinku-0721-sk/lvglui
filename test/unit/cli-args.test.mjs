@@ -99,6 +99,12 @@ test('--scroll and --max-heap-pct are render-only flags', () => {
   assert.equal(parseArgs(['render', '--scroll', '120', '--all-pages']).flags.allPages, true);
 });
 
+test('validationProblem gates --stop to preview', () => {
+  const base = { project: 'D:/esps3_test/my_lcd' };
+  assert.equal(validationProblem('preview', { ...base, stop: true }, []), null);
+  assert.match(validationProblem('render', { ...base, stop: true }, []), /只用于 preview/);
+});
+
 test('validationProblem gates scroll and heap budget before any work starts', () => {
   const base = { project: 'D:/x' };
   assert.equal(validationProblem('render', { ...base, scroll: '120' }, []), null);

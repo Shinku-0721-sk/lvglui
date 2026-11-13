@@ -38,11 +38,12 @@ description: 在 ESP-IDF 6.x + LVGL 9.x 工程里编写或调整 UI 页面：用
    - `tree` 的 `name/cls/x/y/w/h/text/value` 用来核对布局和文字；`absX/absY` 是相对屏幕的绝对坐标（`x/y` 相对父容器）；
    - 图片用来看溢出、对齐、颜色、中文是否正确；
    - 有编译错误先按 `diagnostics` 第一条修，不要猜 LVGL API；
+   - `warnings` 里的 `[clip] ...` 表示内容超出自身盒子或落在不滚动/不 overflow 的父容器外，先调布局再交付；`artifact.sha256` 是本次截图的指纹，比较时只认它，不要拿 out 目录里旧文件猜；
    - 同时看 `memory.lvgl`（`usedPct`/`maxUsed`）和 `budget`，别为了观感把堆吃超；
    - `--frames` 每帧推进 33 ms：70 帧≈2.3 s，足以看到 1 s 定时器的第二次触发；验证周期刷新就多跑几帧，不要只看默认 12 帧的首屏。
 8. 改完再 render，直到截图合理；最后报告改了哪些文件、截图路径、剩余 warning。
 9. 多页界面：如果 UI 组件实现了 `ui_page_count/ui_page_name/ui_page_show`，用 `render_ui` 的 `allPages:true` 一次看全部页（返回 contact sheet，每页图在 `pages[]`），或用 `page:"<name>"` 单看一页。页面表在 `<uiDir>/src/ui_pages.c`，新增页只往表里加一行 + 加 `include/pages/x.h` 与 `src/pages/x.c`。页面里创建的 `lv_timer` 不随屏幕对象销毁，清理规则见“业务边界”。
-10. 用户想边改边看时调 `mcp__lvglui__preview_ui`（需要看得见就传 `topmost:true` 让它置顶）；保存 UI 源码后窗口约 1 秒自动重建并刷新，失败会保留上一版画面。
+10. 用户想边改边看时调 `mcp__lvglui__preview_ui`（需要看得见就传 `topmost:true` 让它置顶）；保存 UI 源码后窗口约 1 秒自动重建并刷新，失败会保留上一版画面。若返回 `BUILD_BUSY`（预览 watcher 与 CLI/MCP 共用一把构建锁），用 `preview_ui {stop:true}` 关窗后重试；不要杀进程或删 `.lvglui/build/`。
 
 ## 业务边界（硬约束）
 
@@ -94,6 +95,7 @@ lv_obj_t *page_home_create(lv_obj_t *parent) {
 
 - `doctor` 的 `fail`：先修配置/头文件/版本，不要绕过。
 - 编译错误：读 `render_ui` 返回的 `diagnostics`，按文件:行修第一条；不要一次改很多处。
+- `BUILD_BUSY`：另一个构建（通常是预览 watcher）正在写同一个 build 目录；`preview_ui {stop:true}` 后重试，不要删目录、不要归因于文件权限。
 - 链接错误 `ui_port_*`：说明 `components/ui_port/ui_port_impl.c` 还没实现（或实现被挪进了 `main/`，链接顺序拉不进来）；报告缺失符号和需要补的那一行，不要替用户写业务，也不要改 `ui_port_impl.c`。
 - 渲染成功但图片不对：先查 `tree` 的尺寸/文本，再查字体和 flex 参数；一次只改一个变量。
 - 工具不可用：让用户跑 `node cli/lvglui.mjs doctor --project <path>` 或 `dsh install` 后重启。

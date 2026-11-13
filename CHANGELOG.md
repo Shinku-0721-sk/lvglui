@@ -3,6 +3,7 @@
 All notable changes to lvglui are documented here.
 
 ## Unreleased
+- 构建互斥与可诊断失败：CLI/MCP/预览 watcher 共用 `.lvglui/build/.build-lock`（`owner.json` 记录 pid/purpose，持有者进程已死会自动回收）。并发构建不再互相破坏 CMake/Ninja 状态；拿不到锁返回 `BUILD_BUSY`（含持有者 pid 与处理建议），其余 CMake/ninja 失败统一带 `code:BUILD_FAILED`、`firstError`、`diagnostics` 与日志路径。新增 `preview --stop`（MCP `preview_ui {stop:true}`）关闭本工具启动的窗口。单页渲染同时写 `shot-<page>.png` / `tree-<page>.json` 并返回 `artifact`；`tree.json` 增加 `selfW/selfH/overflow/scrollable`，`render` 对“内容超出自身盒子 / 子控件落在不滚动父容器外”给出 `[clip]` 警告。
 - 诊断与 AI 协作收口：`doctor` 现在报告工具版本与 CLI 路径、按 `font.mode` 正确判断字体（`project` 走真实缺字检查、不再误报未启用内置 CJK）、检查 `LV_USE_OBJ_NAME` 是否被固件关闭、并比对 `ui_port.h` 声明与 `ui_port_impl.c` 定义（缺实现时提示固件会链接失败）；`--version` 可直接打印版本。`render` 在 `font.mode=project` 时把缺字写进 `warnings` 与 `meta.font`；`--all-pages` 每页带 `memory`，顶层 `memory.lvgl` 取最坏页并附 `perPage`；`tree.json` 增加 `absX`/`absY` 绝对坐标。MCP 新增 `font` 工具（add/off/status），`font add` 返回并打印 `created/updated/removed` 文件清单。skill 明确 `ui_port_impl.c` 只读（可改 `ui_port.h`/`ui_port_stub.c`）、放宽“先计划再写”的触发条件、说明 `--frames` 即时间并引用新的 font 工具。
 - 内存可见性：`render`/`render_ui` 返回 `memory.lvgl`（LVGL 堆的 `total/free/maxUsed/usedCount/usedPct/fragPct`，与固件同一个 `LV_MEM_SIZE` 池），新增 `--max-heap-pct 1-100` 检查并置 `budget.exceeded`；preview 在 attach/切页后打印同一行，skill 增加内存预算约束（超限先降级再交付）。
 
