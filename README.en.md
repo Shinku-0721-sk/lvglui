@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-Current release candidate: `1.0.0-rc.1` (Windows).
+Current release candidate: `1.0.0-rc.2` (Windows).
 
 `lvglui` compiles the project's own LVGL UI sources into a PC program: a PNG for headless
 rendering, CI and models, and a window for live iteration.

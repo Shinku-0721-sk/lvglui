@@ -2,26 +2,156 @@
 
 All notable changes to lvglui are documented here.
 
-## Unreleased
-- 构建互斥与可诊断失败：CLI/MCP/预览 watcher 共用 `.lvglui/build/.build-lock`（`owner.json` 记录 pid/purpose，持有者进程已死会自动回收）。并发构建不再互相破坏 CMake/Ninja 状态；拿不到锁返回 `BUILD_BUSY`（含持有者 pid 与处理建议），其余 CMake/ninja 失败统一带 `code:BUILD_FAILED`、`firstError`、`diagnostics` 与日志路径。新增 `preview --stop`（MCP `preview_ui {stop:true}`）关闭本工具启动的窗口。单页渲染同时写 `shot-<page>.png` / `tree-<page>.json` 并返回 `artifact`；`tree.json` 增加 `selfW/selfH/overflow/scrollable`，`render` 对“内容超出自身盒子 / 子控件落在不滚动父容器外”给出 `[clip]` 警告。
-- 诊断与 AI 协作收口：`doctor` 现在报告工具版本与 CLI 路径、按 `font.mode` 正确判断字体（`project` 走真实缺字检查、不再误报未启用内置 CJK）、检查 `LV_USE_OBJ_NAME` 是否被固件关闭、并比对 `ui_port.h` 声明与 `ui_port_impl.c` 定义（缺实现时提示固件会链接失败）；`--version` 可直接打印版本。`render` 在 `font.mode=project` 时把缺字写进 `warnings` 与 `meta.font`；`--all-pages` 每页带 `memory`，顶层 `memory.lvgl` 取最坏页并附 `perPage`；`tree.json` 增加 `absX`/`absY` 绝对坐标。MCP 新增 `font` 工具（add/off/status），`font add` 返回并打印 `created/updated/removed` 文件清单。skill 明确 `ui_port_impl.c` 只读（可改 `ui_port.h`/`ui_port_stub.c`）、放宽“先计划再写”的触发条件、说明 `--frames` 即时间并引用新的 font 工具。
-- 内存可见性：`render`/`render_ui` 返回 `memory.lvgl`（LVGL 堆的 `total/free/maxUsed/usedCount/usedPct/fragPct`，与固件同一个 `LV_MEM_SIZE` 池），新增 `--max-heap-pct 1-100` 检查并置 `budget.exceeded`；preview 在 attach/切页后打印同一行，skill 增加内存预算约束（超限先降级再交付）。
+## [1.0.0-rc.2] - 2026-11-21
 
-- 多页渲染：实现 `ui_page_count`/`ui_page_name`/`ui_page_show` 的界面可用 `render --all-pages` 逐页出图并拼 `shot-sheet.png` 总览，或用 `--page <name>` 单页渲染；MCP 的 `render_ui` 增加 `page`/`allPages`。没有契约的工程行为不变。
-- `init` 模板新增 `include/ui_pages.h` 与 `src/ui_pages.c`（默认一页 `home`）。
-- 实时预览：整块画面都可拖动窗口，位置写入 `.lvglui/build/preview-window.txt` 并在下次原位恢复；进程改为 per-monitor DPI aware。
-- 实时预览：首次启动缓存 `vcvars64.bat` 环境到 `.lvglui/build/build-fast.cmd`，之后每次保存只跑 `cmake --build --target ui`；文件轮询 50ms、防抖 100ms。实测保存到刷新从约 2.4s 降到约 1.0s。
-- `preview` 会在工具自身的 `host/*.c`/`CMakeLists.txt` 比工程里的 `preview.exe` 新时自动重建启动器，避免升级后仍跑旧窗口行为。
-- 实时预览新增置顶：`preview --topmost` 一开始就把窗口放在最上层，运行中按 `Ctrl+Alt+T` 可随时切换，标题栏显示 `[topmost]`，并与窗口位置一起记住；MCP 的 `preview_ui` 也接受 `topmost: true`。
-- `doctor` 可以在 `init` 之前跑：UI 还没注入时 `uiDir`/`entry` 只给 warn 和下一步提示，不再整体失败（`lvglui.json` 已存在但指向无效目录/入口仍是 fail）；快速开始顺序调整为 doctor → init。`doctor` 的 detail 也不再打印 `[object Object]`。
-- `init` 现在生成两个组件：`components/app_ui`（UI）和旁边的 `components/ui_port`（`ui_port.h` + `ui_port_impl.c`），`app_ui` 的 `REQUIRES` 带上 `ui_port`。这样 `ui_port_*` 的实现不再需要（也不能）放进 `main/`：`libmain.a` 排在 `libapp_ui.a` 之前且只扫描一次，放在 main 里固件会报 `undefined reference to ui_port_*`。host 预览通过新的 `LVGLUI_PORT_INCLUDE` cache 找到 `ui_port.h`；`doctor` 的 `uiPort` 检查也认识新位置。
-- 修复实时预览/无头渲染在界面第二次刷新时冻死：host 建了 display 却没注册 flush 回调，`disp->flushing` 置 1 后再没人清除，单缓冲路径下一次刷新会卡在 `wait_for_flushing()` 的忙等里（表现为静止画面正常，一旦界面更新就整窗僵住、点关闭无反应；1 秒定时器改 label 必现）。现在 host 注册一个立即调用 `lv_display_flush_ready()` 的 flush 回调，像素基线不变。
-- 新增 `lvglui new <name>`：在 `init` 生成的模板工程里生成 `include/pages/<name>.h` 与 `src/pages/<name>.c`，把注册行追加到 `ui_pages.c` 的页面表末尾，并在组件用显式 `SRCS` 时同步更新 `CMakeLists.txt`。写前备份到 `.lvglui/backup/`，页面表或 CMake 结构失配直接报错不猜，写入失败自动回滚；`--dry-run` 只报告改动。只做 CLI，不加 MCP 工具。
-- `preview` 支持多页查看：标题显示当前页 `page 2/3 settings`，`PgUp`/`PgDn`、`←`/`→` 循环切页，`1`–`9` 直跳，`--page <name>` 指定启动页；切页重建屏幕树并销毁旧页，热重载停在同一页。新增导出 `ui_page_index`/`ui_goto_page`（`ui.dll` 不实现多页契约时窗口行为不变）。这是查看器导航，不含输入注入。
-- `preview` 切页改为按页缓存并复用屏幕，不再销毁旧屏：页面里创建的 `lv_timer` 不随屏幕销毁，删屏后回调会访问已释放的控件，表现为切几次页窗口直接消失。无 `--page` 启动时把模板入口（第 0 页）视为第 1 页，第一次按 `→` 不再原地重建首页。
-- 构建失败时能报出链接错误：新增对 `xxx.obj : error LNK2019: …` 这类无行号的 MSVC 链接错误和 GCC `undefined reference to …` 的解析，按 `file|line|code|message` 去重，并给出 `snprintf/strdup` 在 MSVC C 模式缺失、缺符号实现的提示；`render`/`build` 读 `build.log` 改用 UTF-8→GBK 回退解码，cmd 输出的 `\r` 不再让行尾规则失效。
-- `render --scroll` 与预览滚轮：`render` 可先滚动再截图（`<y>`、`<name>=<y>`、`<name>=top|bottom`，偏移写进 `meta.json.scroll`，不能和 `--all-pages` 同用）；`preview` 支持滚轮滚动指针下最深的可滚容器（Shift 水平）。两者都调用 LVGL 自己的 `lv_obj_scroll_to_*`，截图仍只包含可视区，和固件同一套裁剪。
-- 渲染主题不再由 host 硬编码：去掉 `lv_theme_simple_init()`，改由 `lv_display_create()` 按 `LV_USE_THEME_DEFAULT / SIMPLE / MONO` 自动选择，和固件走同一条路径；工程自己在 UI 入口调用 `lv_display_set_theme()` 也照样生效。此前含默认样式控件（按钮、滑杆、开关等）的界面在预览和固件上会不一致（实测一个未加样式的 `lv_button` 相差 5% 像素）；已自己固定 simple 主题的工程（如 my_lcd）基线不变。README 补了"像素一致的前提"。
+Second release candidate. It closes the gaps that showed up when the tool was
+driven by an agent: concurrent builds corrupting each other, clipped text that
+looked fine in the tree, artifacts that were easy to measure by mistake, and a
+preview that froze on the second repaint. Still a release candidate until a
+clean-machine install and public CI run are confirmed.
+
+### Added
+
+- Multi-page rendering: a UI that defines `ui_page_count` / `ui_page_name` /
+  `ui_page_show` can render every page at once (`render --all-pages`, one PNG
+  per page plus a `shot-sheet.png` contact sheet) or one page
+  (`render --page <name|n>`). MCP's `render_ui` exposes `page` / `allPages`;
+  `meta.json` lists per-page name, SHA-256 and node count.
+- `lvglui new <name>` scaffolds `include/pages/<name>.h` and
+  `src/pages/<name>.c` into an `init`-generated template, appends the page to
+  `ui_pages.c`, and syncs explicit `SRCS`. Files are backed up to
+  `.lvglui/backup/` and a failed insert rolls back; anything that is not the
+  template's page table is rejected, not guessed. `--dry-run` reports only.
+- `render --scroll <y|name=y|name=top|bottom>` samples the visible viewport at
+  a pinned scroll offset and records the resolved widget and offset in
+  `meta.json.scroll`. The preview window scrolls the deepest scrollable
+  container under the pointer with the wheel (Shift for horizontal), using
+  LVGL's own `lv_obj_scroll_to_*`.
+- LVGL heap visibility: `render` / `render_ui` report `memory.lvgl`
+  (`total/free/maxUsed/usedCount/usedPct/fragPct`) from the same `LV_MEM_SIZE`
+  pool the firmware uses; `--max-heap-pct` sets `budget.exceeded` when usage is
+  over the limit. With `--all-pages` each page carries its own numbers, the
+  top-level value is the worst page, and `perPage` lists every page.
+- Diagnostics for agents: `doctor` reports the tool version and CLI path,
+  checks fonts according to `font.mode`, checks whether the firmware disabled
+  `LV_USE_OBJ_NAME` while the UI calls `lv_obj_set_name()`, and compares
+  `ui_port.h` declarations with `ui_port_impl.c` definitions (a missing
+  accessor means the firmware will fail at link time). `render` puts missing
+  project-font glyphs (with code points) into `warnings` and `meta.font`.
+  `--version` prints the tool version and CLI path.
+- MCP gained a `font` tool (`add` / `off` / `status`); `font add` now returns
+  the `created` / `updated` / `removed` files it touched.
+- `tree.json` gained `absX` / `absY` (screen coordinates next to the
+  parent-relative `x` / `y`) and `selfW` / `selfH` / `overflow` /
+  `scrollable`. `render` emits `[clip] ...` warnings when a widget's content is
+  larger than its own box, or a child lies outside a parent that neither
+  scrolls nor shows overflow.
+- Named single-page artifacts: `render --page` also writes
+  `shot-<page>.png` / `tree-<page>.json` and returns `artifact`
+  (`png/tree/bytes/sha256`), so two runs can be compared without guessing which
+  file is current.
+- Cross-process build mutex: the CLI, MCP server and preview watcher share
+  `<build>/.build-lock` (a directory with `owner.json` recording pid and
+  purpose; a dead owner is reclaimed). A waiting build returns `BUILD_BUSY`
+  with the holder and a concrete next step; other CMake/Ninja failures carry
+  `code: BUILD_FAILED`, `firstError`, parsed `diagnostics` and the log path.
+  `preview --stop` / MCP `preview_ui {stop:true}` closes the window this tool
+  started.
+- Preview window options: `preview --topmost` keeps the window above others
+  (`Ctrl+Alt+T` toggles it at runtime, the title shows `[topmost]`), and the
+  whole client area is draggable. Position and topmost state are remembered in
+  `.lvglui/build/preview-window.txt`; the process is per-monitor DPI aware.
+- Multi-page preview navigation: the title shows `page 2/3 settings`;
+  `PgUp` / `PgDn`, `←` / `→` cycle pages and `1`–`9` jump directly;
+  `preview --page <name>` starts on a page. This is viewer navigation only.
+- `init` now generates a second component, `components/ui_port`
+  (`ui_port.h` + `ui_port_impl.c`), and `app_ui` depends on it. The host build
+  finds the header through `LVGLUI_PORT_INCLUDE`; `doctor` understands the new
+  location. Putting `ui_port_impl.c` in `main/` is what produced
+  `undefined reference to ui_port_*` on device.
+- Docs and examples: an English README, a 240x320 sensor-dashboard showcase
+  with the DeepSeek avatar, the no-flash/no-serial boundary, and page-local
+  timer ownership rules in the skill.
+
+### Changed
+
+- The preview rebuild path caches the `vcvars64.bat` environment once
+  (`.lvglui/build/build-fast.cmd`) and then runs only
+  `cmake --build --target ui`; file polling is 50 ms with a 100 ms debounce,
+  bringing save-to-refresh from about 2.4 s to about 1 s. `preview` also
+  rebuilds its launcher when the tool's own host sources are newer than the
+  project's `preview.exe`.
+- Preview page switching caches and reuses each page's screen instead of
+  destroying old screens: page-local `lv_timer` callbacks do not die with the
+  screen, so destroying it made the window vanish after a few switches. The
+  entry screen counts as page 1 when no `--page` is given.
+- `doctor` can run before `init`: a missing UI directory or entry is a warning
+  with the next step, not a failure (a `lvglui.json` that points at a bad
+  directory or entry is still a failure). The quick-start order is
+  doctor → init.
+- The host no longer hard-codes `lv_theme_simple_init()`; `lv_display_create()`
+  picks the theme from `LV_USE_THEME_DEFAULT / SIMPLE / MONO` exactly like the
+  firmware, and a project calling `lv_display_set_theme()` in its UI entry is
+  honored. Previously unstyled widgets (buttons, sliders, switches) differed
+  between preview and device.
+- `--width` / `--height` and sdkconfig resolution detection remain strict: the
+  tool never falls back to 240x320.
+- The DSH skill was updated: `ui_port_impl.c` is read-only (the header and the
+  host stub may change), `--frames` means 33 ms per frame (70 frames ≈ 2.3 s,
+  enough to see a 1 s timer), and a new page or data source must be planned
+  first while single-page layout tweaks do not.
+
+### Fixed
+
+- The preview and headless renderer froze on the second repaint. The host
+  created a display without a flush callback, so `disp->flushing` stayed 1 and
+  the single-buffer path busy-waited in `wait_for_flushing()`. A callback that
+  immediately calls `lv_display_flush_ready()` fixes it; a static 12-frame
+  render never showed the bug while a 1 s label timer always did. Pixel
+  baseline unchanged.
+- Linker errors are parsed: MSVC `xxx.obj : error LNK2019` (no line or column)
+  and GCC `undefined reference to ...` are reported with hints for the common
+  `snprintf` / `strdup` C-mode case and missing `ui_port_*` implementations.
+  `build.log` is decoded as UTF-8 with a GBK fallback, and stray `\r` no longer
+  defeats the line patterns.
+- CMake/Ninja state is cleared when `lvglui.json` inputs change (tool
+  directory, uiDir, LVGL directory, entry, font, pages, port include), so edits
+  no longer keep a stale cache.
+- Generated font C files include `lvgl.h` instead of `lvgl/lvgl.h`, which the
+  IDF component include paths did not resolve.
+
+### Known issues
+
+- Windows 10/11 only; ESP-IDF 6.x and LVGL 9.x only; 16-bit RGB565 only.
+- No interaction simulation in 1.x: no click/drag/sequence scripting and no
+  screenshot after a tap. Navigation is verified with `--page` plus tree
+  coordinates. Interaction is planned for 2.0.
+- No `ui_port` state injection: verifying empty/full/edge data still requires
+  editing the host stub and rebuilding (`portJson` is backlog).
+- The widget tree is bounded (depth 16, 500 nodes, 256 bytes of text; the
+  compact MCP tree keeps 200 nodes), so very large UIs are truncated, though
+  `truncated: true` is reported.
+- `memory` is only available with LVGL's builtin allocator; with clib or a
+  custom allocator there is no monitor and the field is omitted rather than
+  estimated.
+- `--all-pages` cannot be combined with `--scroll` or `--max-heap-pct`
+  (each page runs in its own process).
+- Font auto-integration patches `ui_theme.c` / `CMakeLists.txt` using marker
+  comments; a hand-edited theme or a non-template page table is rejected
+  instead of guessed. The `common` subset adds roughly 3 MB of C source.
+- `serve` and `watch` have no automated tests; the pixel baseline requires the
+  local `D:/esps3_test/my_lcd` project and is skipped on public CI.
+- The design documents under `docs/superpowers/` are historical (2026-11-08);
+  font modes and preview timings there are out of date — README and code are
+  the source of truth.
+- The DSH bundle embeds absolute paths generated by `lvglui dsh install`;
+  moving the checkout requires regenerating the patch and reinstalling the
+  bundle. MCP schema changes require a DSH restart.
+- UI-layer boundaries are a skill convention, not an enforced write fence;
+  there is no audit of files the model edits.
+- Not published to npm (`private: true`); the DSH bundle is installed from a
+  local directory. A clean-machine install and a public CI run are still
+  pending, which is why this remains a release candidate.
 
 ## [1.0.0-rc.1] - 2026-11-09
 
