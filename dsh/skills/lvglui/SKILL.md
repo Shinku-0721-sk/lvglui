@@ -47,6 +47,7 @@ description: 在 ESP-IDF 6.x + LVGL 9.x 工程里编写或调整 UI 页面：用
 
 ## 业务边界（硬约束）
 
+- `doctor` 的 `writable` / `appendOnly` / `readonly` 三项就是当前工程的边界清单（约定，不强制）；先看它再写文件。
 - UI 只依赖 LVGL 和 UI 自己的头（`ui.h`、`ui_port.h`、`ui_theme.h` 等）；**禁止** `#include "esp_..."`、`freertos/...`、`driver/...`、`nvs...`。
 - 业务数据/命令只通过 `ui_port.h` 的 `ui_port_*` 函数。UI 不直接读传感器、不写 NVS、不建任务、不调 `vTaskDelay`。
 - 默认不创建 `lv_timer`：动效用 `lv_anim`（随对象删除自动清理），数据变化直接更新控件。
@@ -56,7 +57,7 @@ description: 在 ESP-IDF 6.x + LVGL 9.x 工程里编写或调整 UI 页面：用
 
 ### 内存预算（硬约束）
 
-- 预览和固件共用 LVGL 的 builtin 堆（`lv_conf.h` 的 `LV_MEM_SIZE`，通常 64 KB）。`render_ui` 返回的 `memory.lvgl` 是这个池的真实占用：`usedPct`、`maxUsed`、`usedCount`、`fragPct`；报告里必须带上 `usedPct` 和 `maxUsed`。
+- 预览和固件共用 LVGL 的 builtin 堆（`lv_conf.h` 的 `LV_MEM_SIZE`，通常 64 KB）。`render_ui` 返回的 `memory.lvgl` 是这个池的真实占用：`usedPct`、`maxUsed`、`usedCount`、`fragPct`；报告里可直接引用 `memory.lvgl.summary`（一句话结论），同时带上 `usedPct` 和 `maxUsed`。
 - 用户给了上限时，把它传给 `render_ui` 的 `maxHeapPct`（1-100）。返回 `budget.exceeded: true` 时**不许交付**：先降级再截图，直到不超过上限；不要用“再加点装饰更好看”换内存。
 - 没给上限时按默认线把握：`usedPct ≥ 70%` 视为偏紧，要在报告里说明；`≥ 85%` 视为不可交付，先优化或请用户明确同意。`fragPct` 持续偏高（>30%）时把大对象放到页面初期一次性创建，避免反复分配。
 - 优化顺序：删装饰（阴影/模糊/渐变/过多圆角）→ 复用样式与对象 → 减少嵌套层级和控件数 → 缩小字号/字符集（`font add --dynamic labels`）→ 小图/少动画。优先保布局与可读性，不要用更多控件堆视觉效果。

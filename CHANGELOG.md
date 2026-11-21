@@ -2,6 +2,10 @@
 
 All notable changes to lvglui are documented here.
 
+## Unreleased
+- `doctor` 新增 `writable` / `appendOnly` / `readonly` 三组路径清单：可改 `<uiDir>/**`；`ui_port.h` 只追加声明、`ui_port_stub.c` 只改 host 桩；`ui_port_impl.c`、`sdkconfig*`、`main/**`、工程级 `CMakeLists.txt`、`managed_components/**` 只读。这是 skill 约定的机器可读版本，不改变任何检查结果。
+- `memory.lvgl` 增加一句话 `summary`（例如 `LVGL heap 59.5 KB: 31% used (18.1 KB), peak 18.8 KB, 41.4 KB free`），CLI 直接打印；`--all-pages` 的 `perPage` 每项也带。`total/free/maxUsed/usedPct/fragPct` 等结构化字段不变。
+
 ## [1.0.0-rc.2] - 2026-11-21
 
 Second release candidate. It closes the gaps that showed up when the tool was

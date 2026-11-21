@@ -121,7 +121,7 @@ void  ui_port_set_relay(bool on);
 
 控件命名用 `lv_obj_set_name(obj, "val_temp")`（预览 `lv_conf.h` 强制开启 `LV_USE_OBJ_NAME`；固件侧也要开），渲染时 `tree.json` 和 PNG 一起给你。`tree.json` 里的 `x`/`y` 相对父容器，`absX`/`absY` 是相对屏幕的绝对坐标。若控件内容超出自身盒子、或子控件落在不滚动/不 overflow 的父容器之外，`render` 会在 `diagnostics.warnings` 里给出 `[clip] ...`，先看它再调布局。
 
-**AI 的编辑边界**：`ui_port.h` 只允许追加声明（不改已有签名/类型），`ui_port_stub.c` 只允许改 `#ifdef LVGLUI_HOST` 内的预览桩，`ui_port_impl.c` 只读。AI 需要新 getter 时应报告“固件需在 `ui_port_impl.c` 补哪一行”，而不是替用户实现业务；`doctor` 会检查头文件声明与实现是否漂移，缺实现时明确提示固件会链接失败。
+**AI 的编辑边界**：`ui_port.h` 只允许追加声明（不改已有签名/类型），`ui_port_stub.c` 只允许改 `#ifdef LVGLUI_HOST` 内的预览桩，`ui_port_impl.c` 只读。AI 需要新 getter 时应报告“固件需在 `ui_port_impl.c` 补哪一行”，而不是替用户实现业务；`doctor` 会检查头文件声明与实现是否漂移，缺实现时明确提示固件会链接失败，并在 `writable` / `appendOnly` / `readonly` 三项里打印这份边界清单（约定，不是强制）。
 
 ## 多页界面
 
@@ -223,7 +223,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 | `font add` | 生成工程字体：默认 labels 子集，`--dynamic common` 常用字大子集，`--dynamic freetype` 运行时 FreeType |
 | `font off` | 移除工程字体、主题挂载和 CMake 条目 |
 | `font status` | 查看字体模式、字符数和缺字 |
-| `doctor` | 检查工程、IDF/LVGL 版本、工具链、显示配置、平台头（可以在 `init` 之前跑：UI 还没注入时给 warn 和下一步提示） |
+| `doctor` | 检查工程、IDF/LVGL 版本、工具链、显示配置、平台头、UI 写入边界（可以在 `init` 之前跑：UI 还没注入时给 warn 和下一步提示） |
 | `dsh install` | 生成 DSH bundle 用的 `dsh/cordis.patch.yml` 并打印安装命令 |
 | `help` | 帮助 |
 
@@ -272,7 +272,8 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 
 ```json
 "memory": { "lvgl": { "total": 60912, "free": 42416, "maxUsed": 19200,
-                      "usedCount": 266, "usedPct": 31, "fragPct": 1 } }
+                      "usedCount": 266, "usedPct": 31, "fragPct": 1,
+                      "summary": "LVGL heap 59.5 KB: 31% used (18.1 KB), peak 18.8 KB, 41.4 KB free" } }
 ```
 
 `lvglui render --max-heap-pct 70` 会再加一段
@@ -282,6 +283,7 @@ FreeType 不生成 `.c` 字库，工程体积小，但运行时占 RAM、首次�
 不用靠猜。
 
 - `total` / `free` / `maxUsed` 是 LVGL 池内的字节数，`usedCount` 是当前存活分配数；
+- `summary` 是一句话结论（总量、当前使用率与占用、峰值、剩余），CLI 直接打印它；结构化字段才是权威；
 - `allPages` 时 `memory.lvgl` 取最坏的一页，`memory.perPage` 列出每页的数字——某页特别高时按页优化；
 - `maxUsed` 是本进程的峰值——切页前后对比它，能看出堆是否只涨不落；
 - 不报告进程 RSS：它混了纹理、字体和无关分配，容易误导；

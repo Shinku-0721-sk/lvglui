@@ -140,7 +140,13 @@ test('memInfo reads the line shot.exe prints after the frames', () => {
     usedCount: 42,
     usedPct: 36,
     fragPct: 3,
+    summary: 'LVGL heap 64.0 KB: 36% used (23.7 KB), peak 23.7 KB, 40.3 KB free',
   });
   assert.equal(memInfo('scroll - 0 120\n'), null);
   assert.equal(memInfo('mem total=65536 free=1\n').maxUsed, null);
+});
+
+test('memInfo summary derives the percentage when used_pct is absent', () => {
+  const parsed = memInfo('mem total=65536 free=32768\n');
+  assert.equal(parsed.summary, 'LVGL heap 64.0 KB: 50% used (32.0 KB), 32.0 KB free');
 });

@@ -100,6 +100,31 @@ function scrollInfo(stdout) {
 // Parse the `mem total=... free=... max_used=... used_cnt=... used_pct=...
 // frag_pct=...` line shot.exe prints after the frames. The numbers describe
 // LVGL's own heap, which the firmware allocates from as well.
+function kb(bytes) {
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+// One-sentence conclusion for humans and agents; the structured fields stay
+// authoritative. `usedPct` is current usage, `maxUsed` this run's peak, `free`
+// is what is left at sample time.
+function memorySummary(info) {
+  if (!info || !Number.isFinite(info.total) || info.total <= 0) return null;
+  const free = Number.isFinite(info.free) ? info.free : null;
+  const maxUsed = Number.isFinite(info.maxUsed) ? info.maxUsed : null;
+  const givenPct = Number.isFinite(info.usedPct) ? info.usedPct : null;
+  const usedPct = givenPct ?? (free === null ? null : Math.round(((info.total - free) / info.total) * 100));
+  if (free === null && maxUsed === null && usedPct === null) return null;
+
+  const parts = [];
+  if (free !== null) parts.push(`${usedPct ?? '?'}% used (${kb(info.total - free)})`);
+  else if (usedPct !== null) parts.push(`${usedPct}% used`);
+  if (maxUsed !== null) parts.push(`peak ${kb(maxUsed)}`);
+  if (free !== null) parts.push(`${kb(free)} free`);
+  return parts.length === 0
+    ? `LVGL heap ${kb(info.total)}`
+    : `LVGL heap ${kb(info.total)}: ${parts.join(', ')}`;
+}
+
 export function memInfo(stdout) {
   const line = String(stdout ?? '')
     .split(/\r?\n/)
@@ -113,7 +138,7 @@ export function memInfo(stdout) {
     if (key && Number.isFinite(n)) fields[key] = n;
   }
   if (fields.total === undefined) return null;
-  return {
+  const info = {
     total: fields.total,
     free: fields.free ?? null,
     maxUsed: fields.max_used ?? null,
@@ -121,6 +146,8 @@ export function memInfo(stdout) {
     usedPct: fields.used_pct ?? null,
     fragPct: fields.frag_pct ?? null,
   };
+  const summary = memorySummary(info);
+  return summary === null ? info : { ...info, summary };
 }
 
 // Ask shot.exe for the page list (one name per line, render order). The names

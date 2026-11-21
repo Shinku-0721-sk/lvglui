@@ -55,6 +55,8 @@ test('doctor before init warns on uiDir/entry instead of failing', (t) => {
   assert.equal(byId.get('uiDir').status, 'warn');
   assert.match(byId.get('uiDir').message, /lvglui init/);
   assert.equal(byId.get('entry').status, 'warn');
+  assert.equal(byId.get('writable').status, 'warn');
+  assert.match(byId.get('writable').message, /未生成写入边界/);
 });
 
 test('a config that points at a missing uiDir is a fail', (t) => {
@@ -151,6 +153,34 @@ test('uiPort warns when a declared accessor has no definition', (t) => {
   assert.equal(check.status, 'warn');
   assert.match(check.message, /ui_port_get_lux/);
   assert.match(check.message, /undefined reference/);
+});
+
+test('boundary lists writable, append-only and read-only paths', (t) => {
+  const project = ctx(t, CLEAN_UI);
+  const port = path.join(project.root, 'components', 'ui_port');
+  fs.mkdirSync(path.join(port, 'include'), { recursive: true });
+  fs.writeFileSync(path.join(port, 'include', 'ui_port.h'), '#pragma once\n');
+  fs.writeFileSync(path.join(port, 'ui_port_impl.c'), '');
+  project.portInclude = path.join(port, 'include');
+
+  const r = doctor(project, { toolchain: { ok: true } });
+  const byId = new Map(r.checks.map((check) => [check.id, check]));
+
+  assert.equal(byId.get('writable').status, 'ok');
+  assert.deepEqual(byId.get('writable').detail.paths, ['components/app_ui/**']);
+  assert.deepEqual(byId.get('appendOnly').detail.paths, [
+    'components/ui_port/include/ui_port.h',
+    'components/app_ui/src/ui_port_stub.c',
+  ]);
+  assert.match(byId.get('appendOnly').message, /仅追加声明/);
+  assert.match(byId.get('appendOnly').message, /LVGLUI_HOST/);
+  assert.deepEqual(byId.get('readonly').detail.paths, [
+    'components/ui_port/ui_port_impl.c',
+    'sdkconfig*',
+    'main/**',
+    'CMakeLists.txt',
+    'managed_components/**',
+  ]);
 });
 
 test('objName warns when firmware disables names but the UI uses them', (t) => {

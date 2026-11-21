@@ -325,15 +325,61 @@ function checkToolchain(toolchain) {
   );
 }
 
-function checkUiPort(ctx) {
-  // The header lives in the ui_port component (components/ui_port/include) in
-  // the layout init generates; older projects keep it in the UI component.
-  let header = '';
-  if (typeof ctx?.portInclude === 'string' && ctx.portInclude !== '') {
-    header = path.join(ctx.portInclude, 'ui_port.h');
-  } else if (typeof ctx?.uiDir === 'string' && ctx.uiDir !== '') {
-    header = path.join(ctx.uiDir, 'include', 'ui_port.h');
+function toPosix(value) {
+  return String(value).replace(/\\/g, '/');
+}
+
+// Project-relative when possible, absolute otherwise, so the same project
+// prints the same boundary list regardless of the caller's working directory.
+function shownPath(ctx, target) {
+  const root = typeof ctx?.root === 'string' && ctx.root !== '' ? path.resolve(ctx.root) : '';
+  const abs = path.resolve(target);
+  if (root !== '') {
+    const rel = path.relative(root, abs);
+    if (rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)) {
+      return toPosix(rel);
+    }
   }
+  return toPosix(abs);
+}
+
+// The header lives in the ui_port component (components/ui_port/include) in
+// the layout init generates; older projects keep it in the UI component.
+function uiPortHeaderPath(ctx) {
+  if (typeof ctx?.portInclude === 'string' && ctx.portInclude !== '') {
+    return path.join(ctx.portInclude, 'ui_port.h');
+  }
+  if (typeof ctx?.uiDir === 'string' && ctx.uiDir !== '') {
+    return path.join(ctx.uiDir, 'include', 'ui_port.h');
+  }
+  return null;
+}
+
+function uiPortImplCandidates(ctx, header) {
+  const candidates = [];
+  if (header) candidates.push(path.join(path.dirname(path.dirname(header)), 'ui_port_impl.c'));
+  if (typeof ctx?.uiDir === 'string' && ctx.uiDir !== '') {
+    candidates.push(path.join(ctx.uiDir, 'src', 'ui_port_impl.c'));
+    candidates.push(path.join(ctx.uiDir, 'ui_port_impl.c'));
+  }
+  return [...new Set(candidates)];
+}
+
+// Where the implementation is expected to live even before it exists: the
+// sibling ui_port component for the generated layout, the UI component for
+// older projects.
+function expectedUiPortImpl(ctx, header) {
+  if (header && typeof ctx?.portInclude === 'string' && ctx.portInclude !== '') {
+    return path.join(path.dirname(path.dirname(header)), 'ui_port_impl.c');
+  }
+  if (typeof ctx?.uiDir === 'string' && ctx.uiDir !== '') {
+    return path.join(ctx.uiDir, 'src', 'ui_port_impl.c');
+  }
+  return null;
+}
+
+function checkUiPort(ctx) {
+  const header = uiPortHeaderPath(ctx) ?? '';
   if (header === '' || !fs.existsSync(header)) {
     if (typeof ctx?.uiDir !== 'string' || ctx.uiDir === '') {
       return makeCheck('uiPort', 'warn', 'UI 目录未确定，未检查 ui_port.h');
@@ -408,15 +454,68 @@ function definedFunctions(source) {
 }
 
 function findUiPortImplementation(ctx, header) {
-  const candidates = [
-    path.join(path.dirname(path.dirname(header)), 'ui_port_impl.c'),
-    typeof ctx?.uiDir === 'string' ? path.join(ctx.uiDir, 'src', 'ui_port_impl.c') : '',
-    typeof ctx?.uiDir === 'string' ? path.join(ctx.uiDir, 'ui_port_impl.c') : '',
-  ].filter((value) => value !== '');
-  for (const candidate of candidates) {
+  for (const candidate of uiPortImplCandidates(ctx, header)) {
     if (fs.existsSync(candidate)) return candidate;
   }
   return null;
+}
+
+// Machine-readable version of the boundary the skill states in prose. It does
+// not assert anything: every project has the same three groups, and the
+// generated ui_port layout is the one `doctor` already resolves. Keeping the
+// paths here (instead of only in the skill) lets an agent check what it may
+// touch without guessing at the directory layout.
+function checkBoundary(ctx) {
+  const uiDir = typeof ctx?.uiDir === 'string' && ctx.uiDir !== '' ? ctx.uiDir : null;
+  if (uiDir === null) {
+    return ['writable', 'appendOnly', 'readonly'].map((id) => makeCheck(
+      id,
+      'warn',
+      'UI 目录未确定，未生成写入边界清单（注入 UI 后再跑 doctor）',
+    ));
+  }
+
+  const header = uiPortHeaderPath(ctx);
+  const impl = findUiPortImplementation(ctx, header) ?? expectedUiPortImpl(ctx, header);
+  const stub = path.join(uiDir, 'src', 'ui_port_stub.c');
+
+  const writable = [`${shownPath(ctx, uiDir)}/**`];
+  const append = [];
+  const appendRules = [];
+  if (header) {
+    append.push(shownPath(ctx, header));
+    appendRules.push('仅追加声明，不改已有签名/类型');
+  }
+  append.push(shownPath(ctx, stub));
+  appendRules.push('仅 #ifdef LVGLUI_HOST 内的预览桩');
+  const appendMessage = append
+    .map((target, index) => `${target}（${appendRules[index]}）`)
+    .join('；');
+
+  const readonly = [];
+  if (impl) readonly.push(shownPath(ctx, impl));
+  readonly.push('sdkconfig*', 'main/**', 'CMakeLists.txt', 'managed_components/**');
+
+  return [
+    makeCheck(
+      'writable',
+      'ok',
+      `可改（约定）：${writable.join(', ')}（UI 层源码）`,
+      { paths: writable },
+    ),
+    makeCheck(
+      'appendOnly',
+      'ok',
+      `仅追加/受限修改（约定）：${appendMessage}`,
+      { paths: append },
+    ),
+    makeCheck(
+      'readonly',
+      'ok',
+      `只读（约定）：${readonly.join(', ')}（业务实现、固件配置与工程级构建文件）`,
+      { paths: readonly },
+    ),
+  ];
 }
 
 function checkFont(ctx) {
@@ -561,6 +660,7 @@ export function doctor(ctx, options = {}) {
     checkPlatformHeaders(ctx),
     checkToolchain(opts.toolchain),
     checkUiPort(ctx),
+    ...checkBoundary(ctx),
     checkFont(ctx),
     checkObjName(ctx),
   ];

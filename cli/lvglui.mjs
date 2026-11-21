@@ -443,7 +443,8 @@ async function runRender(flags) {
     console.log(`[lvglui] png=${result.pngPath} meta=${result.metaPath} tree=${result.treePath}${suffix}`);
     if (result.memory?.lvgl) {
       const m = result.memory.lvgl;
-      console.log(`[lvglui] heap ${m.usedPct}% used (${m.total - m.free}/${m.total} B, peak ${m.maxUsed} B)`);
+      const where = typeof m.page === 'string' && m.page !== '' ? `[${m.page}] ` : '';
+      console.log(`[lvglui] ${where}${m.summary ?? `heap ${m.usedPct}% used`}`);
     }
     if (result.budget?.exceeded) {
       console.warn(`[lvglui] heap budget exceeded: ${result.memory.lvgl.usedPct}% > ${result.budget.heapPct}%`);

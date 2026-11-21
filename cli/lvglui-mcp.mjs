@@ -104,7 +104,7 @@ const TOOLS = [
   },
   {
     name: 'doctor',
-    description: '自检：IDF/LVGL、分辨率、UI 目录/入口、SRCS、平台头文件、工具链和字体。',
+    description: '自检：IDF/LVGL、分辨率、UI 目录/入口、SRCS、平台头文件、UI 写入边界、工具链和字体。',
     inputSchema: {
       type: 'object',
       properties: { project: PROJECT_ARG, width: WIDTH_ARG, height: HEIGHT_ARG },

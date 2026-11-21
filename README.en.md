@@ -147,7 +147,8 @@ type changes), `ui_port_stub.c` only its `#ifdef LVGLUI_HOST` preview values, an
 `ui_port_impl.c` is read-only. When a new getter is needed the assistant must report the exact
 line the firmware still needs instead of writing business code; `doctor` checks declared versus
 defined `ui_port_*` functions and warns that firmware will fail to link while an implementation
-is missing.
+is missing. It also prints the same boundary as `writable` / `appendOnly` / `readonly` checks
+(the convention is advisory, not enforced).
 
 ## Multi-page UIs
 
@@ -287,7 +288,7 @@ TTF, the apply code and the config entries.
 | `font add` | Generate a project font: labels subset by default, `--dynamic common` for the larger common-character set, `--dynamic freetype` for runtime FreeType |
 | `font off` | Remove the project font, theme hook and CMake entries |
 | `font status` | Show font mode, character counts and missing glyphs |
-| `doctor` | Check project, IDF/LVGL versions, toolchain, display config and platform headers (may run before `init`: warns and suggests the next step when no UI exists yet) |
+| `doctor` | Check project, IDF/LVGL versions, toolchain, display config, platform headers and the UI write boundary (may run before `init`: warns and suggests the next step when no UI exists yet) |
 | `dsh install` | Generate `dsh/cordis.patch.yml` for the DSH bundle and print the install command |
 | `help` | Help |
 
@@ -368,7 +369,8 @@ Exit codes: `0` success, `1` build/render failure, `2` usage/config error, `3` r
 
 ```json
 "memory": { "lvgl": { "total": 60912, "free": 42416, "maxUsed": 19200,
-                      "usedCount": 266, "usedPct": 31, "fragPct": 1 } }
+                      "usedCount": 266, "usedPct": 31, "fragPct": 1,
+                      "summary": "LVGL heap 59.5 KB: 31% used (18.1 KB), peak 18.8 KB, 41.4 KB free" } }
 ```
 
 `lvglui render --max-heap-pct 70` adds
@@ -379,6 +381,8 @@ as `memory` / `budget`, so an assistant can be held to a limit without guessing.
 
 - `total` / `free` / `maxUsed` are bytes inside the LVGL pool; `usedCount` is the number of live
   allocations;
+- `summary` is a one-sentence conclusion (total, current usage and bytes, peak, free); the CLI
+  prints it directly, while the numeric fields remain authoritative;
 - with `allPages`, `memory.lvgl` is the worst page and `memory.perPage` lists each page, so a
   single heavy page can be optimised on its own;
 - `maxUsed` is this process's high-water mark — compare it across page switches to spot growth;
